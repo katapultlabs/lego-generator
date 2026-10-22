@@ -47,6 +47,7 @@ function Slider({
   value,
   min,
   max,
+  step = 1,
   onChange,
   format,
 }: {
@@ -55,6 +56,7 @@ function Slider({
   value: number;
   min: number;
   max: number;
+  step?: number;
   onChange: (v: number) => void;
   format?: (v: number) => string;
 }) {
@@ -64,7 +66,7 @@ function Slider({
         <span>{label}</span>
         <b>{format ? format(value) : value}</b>
       </span>
-      <input type="range" min={min} max={max} step={1} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
       {hint && <small>{hint}</small>}
     </label>
   );
@@ -99,6 +101,8 @@ export function OptionsCard({
         </div>
         <Slider label="Hollow" hint="Keep only an outer shell to save parts." value={opts.hollow} min={0} max={3} onChange={(v) => set('hollow', v)} format={(v) => (v === 0 ? 'solid' : `shell ${v}`)} />
         <Slider label="Smooth" hint="Round off stair-steps in the voxels." value={opts.smooth} min={0} max={3} onChange={(v) => set('smooth', v)} format={(v) => (v === 0 ? 'off' : String(v))} />
+        <Slider label="Colors" hint="Merge similar colors into this many. Fewer colors, simpler build." value={opts.colorCount} min={0} max={12} onChange={(v) => set('colorCount', v)} format={(v) => (v === 0 ? 'auto' : String(v))} />
+        <Slider label="Color boost" hint="Punch up dull photo colors before matching bricks." value={opts.vivid} min={1} max={2} step={0.1} onChange={(v) => set('vivid', Math.round(v * 10) / 10)} format={(v) => `${v.toFixed(1)}x`} />
         <Slider label="Attempts" hint="Random tilings tried; the sturdiest wins." value={opts.attempts} min={1} max={16} onChange={(v) => set('attempts', v)} />
         <div className="field">
           <span className="field-top"><span>Up axis of mesh</span></span>

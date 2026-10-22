@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGLTF } from '@react-three/drei';
 import { brickify, loadMesh, toLdraw } from './engine';
-import { generateFromPhoto } from './generate';
+import { fetchGenerations, fetchGlb, generateFromPhoto, type GenModelId } from './generate';
+import { photoViewFor } from './photoView';
 import { bomToCsv, saveBlob } from './lib/download';
-import type { BrickModel, BrickifyOptions, ViewMode } from './types';
+import type { BrickModel, BrickifyOptions, Generation, PhotoMode, ViewMode } from './types';
 import { Viewer } from './components/Viewer';
-import { BomCard, Card, DownloadsCard, OptionsCard, Segmented, StatsCard } from './components/Panel';
+import { BomCard, DownloadsCard, OptionsCard, Segmented, StatsCard } from './components/Panel';
+import { GalleryCard, ProgressCard, SetupCard, SourceCard } from './components/Generate';
 
-const DEFAULT_OPTS: BrickifyOptions = { studs: 32, layer: 'brick', hollow: 0, smooth: 0, attempts: 6, upAxis: 'y' };
+const DEFAULT_OPTS: BrickifyOptions = { studs: 32, layer: 'brick', hollow: 0, smooth: 0, attempts: 6, upAxis: 'y', colorCount: 8, vivid: 1.3 };
 const SAMPLE_URL = '/samples/beetle.glb';
 const IMAGE_EXT = /\.(jpe?g|png|webp|heic|heif)$/i;
 
@@ -23,7 +25,18 @@ export default function App() {
   const [meshVersion, setMeshVersion] = useState(0);
   const [sourceName, setSourceName] = useState<string | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photoBroken, setPhotoBroken] = useState(false);
+  const [cutoutUrl, setCutoutUrl] = useState<string | null>(null);
+  const [generation, setGeneration] = useState<Generation | null>(null);
+  const [gallery, setGallery] = useState<Generation[] | null>(null);
+  const [photoMode, setPhotoMode] = useState<PhotoMode>('photo');
+  const [turn, setTurn] = useState(0);
+  const [photoViewTick, setPhotoViewTick] = useState(0);
+
+  // photo chosen but not generated yet
+  const [staged, setStaged] = useState<{ file: File; url: string } | null>(null);
+  const [subject, setSubject] = useState('');
+  const [genModel, setGenModel] = useState<GenModelId>('trellis-2');
+  const [progress, setProgress] = useState<{ steps: string[]; startedAt: number; model: GenModelId } | null>(null);
 
   const [busy, setBusy] = useState<string | null>(null);
   const [computing, setComputing] = useState(false);
@@ -49,7 +62,7 @@ export default function App() {
   stepRef.current = step;
 
   // ------------------------------------------------------------ loading
-  const adoptMesh = useCallback(async (buf: ArrayBuffer, name: string, photo: string | null) => {
+  const adoptMesh = useCallback(async (buf: ArrayBuffer, name: string, photo: string | null, cutout: string | null, gen: Generation | null) => {
     const token = ++loadToken.current;
     setBusy('Reading 3D mesh...');
     setError(null);
@@ -64,7 +77,11 @@ export default function App() {
       photoUrlRef.current = photo;
       setMeshUrl(url);
       setPhotoUrl(photo);
-      setPhotoBroken(false);
+      setCutoutUrl(cutout);
+      setGeneration(gen);
+      setTurn(0);
+      setPhotoViewTick((n) => n + 1);
+      history.replaceState(null, '', gen ? `?gen=${encodeURIComponent(gen.id)}` : location.pathname);
       setSourceName(name);
       setModel(null);
       setPlaying(false);
@@ -78,44 +95,103 @@ export default function App() {
     }
   }, []);
 
+  const clearStaged = useCallback(() => {
+    setStaged((s) => {
+      if (s) URL.revokeObjectURL(s.url);
+      return null;
+    });
+  }, []);
+
   const handleFile = useCallback(
     async (file: File) => {
       const lower = file.name.toLowerCase();
       if (lower.endsWith('.glb') || file.type === 'model/gltf-binary') {
-        await adoptMesh(await file.arrayBuffer(), file.name, null);
+        clearStaged();
+        await adoptMesh(await file.arrayBuffer(), file.name, null, null, null);
       } else if (file.type.startsWith('image/') || IMAGE_EXT.test(lower)) {
-        const photo = URL.createObjectURL(file);
+        // Let the user confirm subject + model before spending money.
         setError(null);
-        setBusy('Uploading photo...');
-        try {
-          const glb = await generateFromPhoto(file, (m) => setBusy(m));
-          await adoptMesh(glb, file.name, photo);
-        } catch (e) {
-          URL.revokeObjectURL(photo);
-          setBusy(null);
-          setError(e instanceof Error ? e.message : String(e));
-        }
+        setStaged((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url);
+          return { file, url: URL.createObjectURL(file) };
+        });
       } else {
         setError(`Unsupported file "${file.name}". Drop a photo (jpg, png, webp, heic) or a .glb.`);
       }
     },
-    [adoptMesh],
+    [adoptMesh, clearStaged],
+  );
+
+  const generate = useCallback(async () => {
+    if (!staged) return;
+    setError(null);
+    setProgress({ steps: ['Uploading photo'], startedAt: Date.now(), model: genModel });
+    try {
+      const g = await generateFromPhoto(staged.file, { subject, model: genModel }, (m) =>
+        setProgress((p) => (p && p.steps[p.steps.length - 1].toLowerCase() !== m.toLowerCase() ? { ...p, steps: [...p.steps, m] } : p)),
+      );
+      setProgress(null);
+      clearStaged();
+      void fetchGenerations().then(setGallery, () => {});
+      setBusy('Loading 3D model...');
+      await adoptMesh(await fetchGlb(g.glbUrl), g.subject || staged.file.name, g.photoUrl, g.cutoutUrl, g);
+    } catch (e) {
+      setProgress(null);
+      setBusy(null);
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [staged, subject, genModel, adoptMesh, clearStaged]);
+
+  const loadGeneration = useCallback(
+    async (g: Generation) => {
+      setError(null);
+      setBusy('Loading saved model...');
+      try {
+        clearStaged();
+        await adoptMesh(await fetchGlb(g.glbUrl), g.subject || g.id, g.photoUrl, g.cutoutUrl, g);
+      } catch (e) {
+        setBusy(null);
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [adoptMesh, clearStaged],
   );
 
   const loadSample = useCallback(async () => {
     setError(null);
     setBusy('Loading sample...');
     try {
+      clearStaged();
       const res = await fetch(SAMPLE_URL);
       if (!res.ok) throw new Error(`Sample not found (HTTP ${res.status}).`);
       const buf = await res.arrayBuffer();
       if (!isGlb(buf)) throw new Error('Sample file is missing: put beetle.glb in public/samples/.');
-      await adoptMesh(buf, 'beetle.glb', '/samples/beetle.jpg');
+      await adoptMesh(buf, 'beetle.glb', '/samples/beetle.jpg', null, null);
     } catch (e) {
       setBusy(null);
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [adoptMesh]);
+  }, [adoptMesh, clearStaged]);
+
+  // gallery + ?gen=<id> on first load
+  const booted = useRef(false);
+  useEffect(() => {
+    if (booted.current) return;
+    booted.current = true;
+    const wanted = new URLSearchParams(location.search).get('gen');
+    fetchGenerations().then(
+      (list) => {
+        setGallery(list);
+        if (!wanted) return;
+        const g = list.find((x) => x.id === wanted);
+        if (g) void loadGeneration(g);
+        else setError(`No saved generation "${wanted}".`);
+      },
+      (e) => {
+        if (wanted) setError(e instanceof Error ? e.message : String(e));
+      },
+    );
+  }, [loadGeneration]);
 
   // ------------------------------------------------------------ brickify (debounced)
   useEffect(() => {
@@ -213,7 +289,8 @@ export default function App() {
     }
   };
 
-  const empty = !meshUrl && !busy;
+  const empty = !meshUrl && !busy && !staged && !progress;
+  const photoView = useMemo(() => photoViewFor(generation?.model), [generation]);
   const meshOnly = !!meshUrl && !model; // show the source mesh until the first brick model arrives
 
   return (
@@ -227,6 +304,12 @@ export default function App() {
           exploded={exploded}
           upAxis={opts.upAxis}
           recenter={recenter}
+          photoViewTick={photoViewTick}
+          photoView={photoView}
+          photoUrl={photoUrl}
+          cutoutUrl={cutoutUrl}
+          photoMode={photoMode}
+          turn={turn}
           onMeshError={setError}
         />
 
@@ -249,6 +332,19 @@ export default function App() {
                 { value: 'both', label: 'Both' },
               ]}
             />
+            <div className="viewrow">
+              <Segmented<PhotoMode>
+                value={photoMode}
+                onChange={setPhotoMode}
+                options={[
+                  { value: 'photo', label: 'Photo', disabled: !photoUrl },
+                  { value: 'cutout', label: 'Cutout', disabled: !cutoutUrl },
+                  { value: 'off', label: 'Off' },
+                ]}
+              />
+              <button className="chip raised" onClick={() => setPhotoViewTick((n) => n + 1)} title="Fly the camera back to where the photo was taken from">Photo view</button>
+              <button className="chip raised" onClick={() => setTurn((n) => n + 1)} title="Rotate the model 90 degrees if it faces the wrong way">Turn 90&deg;</button>
+            </div>
           </div>
         )}
 
@@ -271,6 +367,21 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {staged && !progress && (
+          <SetupCard
+            photoUrl={staged.url}
+            fileName={staged.file.name}
+            subject={subject}
+            model={genModel}
+            onSubject={setSubject}
+            onModel={setGenModel}
+            onGenerate={generate}
+            onCancel={clearStaged}
+          />
+        )}
+
+        {progress && staged && <ProgressCard photoUrl={staged.url} steps={progress.steps} startedAt={progress.startedAt} model={progress.model} />}
 
         {busy && (
           <div className="busy">
@@ -318,36 +429,28 @@ export default function App() {
       </main>
 
       <aside className="panel">
-        <Card title="Source">
-          <div className="source">
-            <div className="thumb">
-              {photoUrl && !photoBroken ? (
-                <img src={photoUrl} alt="Source photo" onError={() => setPhotoBroken(true)} />
-              ) : (
-                <span>{photoUrl ? 'HEIC' : meshUrl ? '3D' : '?'}</span>
-              )}
-            </div>
-            <div className="source-info">
-              <b title={sourceName ?? ''}>{sourceName ?? 'Nothing loaded yet'}</b>
-              <small>{photoUrl ? 'Photo converted to a 3D mesh' : meshUrl ? 'Loaded 3D mesh' : 'Photo or .glb'}</small>
-            </div>
-          </div>
-          <div className="row">
-            <button className="btn primary" onClick={() => fileInput.current?.click()} disabled={!!busy}>Upload</button>
-            <button className="btn" onClick={loadSample} disabled={!!busy}>Try sample</button>
-          </div>
-          <input
-            ref={fileInput}
-            type="file"
-            hidden
-            accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif,.glb,model/gltf-binary"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (f) void handleFile(f);
-            }}
-          />
-        </Card>
+        <SourceCard
+          name={sourceName}
+          photoUrl={photoUrl}
+          cutoutUrl={cutoutUrl}
+          generation={generation}
+          hasMesh={!!meshUrl}
+          busy={!!busy || !!progress}
+          onUpload={() => fileInput.current?.click()}
+          onSample={loadSample}
+        />
+        <input
+          ref={fileInput}
+          type="file"
+          hidden
+          accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif,.glb,model/gltf-binary"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) void handleFile(f);
+          }}
+        />
+        <GalleryCard items={gallery} activeId={generation?.id ?? null} disabled={!!busy || !!progress} onPick={loadGeneration} />
 
         <OptionsCard opts={opts} onChange={setOpts} computing={computing} disabled={!meshUrl} />
 

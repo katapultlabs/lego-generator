@@ -1,7 +1,7 @@
 //! brickify: GLB in, brick model out.
 //!
 //! brickify <input.glb> [--studs N] [--plates] [--hollow N] [--smooth N] [--attempts N]
-//!          [--repair N] [--z-up] [--seed N] [--out DIR]
+//!          [--repair N] [--colors N] [--vivid F] [--z-up] [--seed N] [--out DIR]
 
 mod preview;
 
@@ -33,6 +33,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--attempts" => opts.attempts = num(args.next(), "--attempts")? as u32,
             "--repair" => opts.repair = num(args.next(), "--repair")? as u32,
             "--seed" => opts.seed = num(args.next(), "--seed")?,
+            "--colors" => opts.color_count = num(args.next(), "--colors")? as u32,
+            "--vivid" => opts.vivid = args.next().ok_or("--vivid needs a value")?.parse().map_err(|_| "--vivid: not a number")?,
             "--plates" => opts.layer = LayerKind::Plate,
             "--z-up" => opts.up_axis = UpAxis::Z,
             "--out" => out = args.next().ok_or("--out needs a value")?.into(),

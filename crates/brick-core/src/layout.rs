@@ -39,7 +39,7 @@ pub struct Layout<'g> {
     /// Brick id per cell, or -1.
     owner: Vec<i32>,
     bricks: Vec<Option<Placement>>,
-    /// Per brick id: belongs to a component touching the ground layer (valid after `analyze`).
+    /// Per brick id: belongs to the main (largest) connected piece (valid after `analyze`).
     grounded: Vec<bool>,
 }
 
@@ -118,6 +118,7 @@ impl<'g> Layout<'g> {
         let mut best: Option<(f32, Placement)> = None;
         let mut below: Vec<i32> = Vec::with_capacity(16);
         let mut above: Vec<i32> = Vec::with_capacity(16);
+        let mut colors: Vec<(i16, u32)> = Vec::with_capacity(4);
 
         for part in PARTS {
             let (a, b) = (part.a as usize, part.b as usize);
@@ -128,7 +129,7 @@ impl<'g> Layout<'g> {
                         if x0 + w > g.nx || z0 + d > g.nz {
                             continue;
                         }
-                        let mut color: Option<i16> = None;
+                        colors.clear();
                         below.clear();
                         above.clear();
                         for z in z0..z0 + d {
@@ -139,10 +140,14 @@ impl<'g> Layout<'g> {
                                     continue 'offset;
                                 }
                                 if c != WILDCARD {
-                                    match color {
-                                        None => color = Some(c),
-                                        Some(k) if k != c => continue 'offset,
-                                        _ => {}
+                                    if let Some(e) = colors.iter_mut().find(|e| e.0 == c) {
+                                        e.1 += 1;
+                                    } else if colors.is_empty() || bridge_bonus > 0.0 {
+                                        // Mixed colors only while repairing: a bridge across a
+                                        // color boundary beats a part that falls off.
+                                        colors.push((c, 1));
+                                    } else {
+                                        continue 'offset;
                                     }
                                 }
                                 if y > 0 {
@@ -162,7 +167,9 @@ impl<'g> Layout<'g> {
 
                         let area = (w * d) as f32;
                         let links = (below.len() + above.len()) as f32;
-                        let mut score = area + 1.2 * links + 0.3 * rng.next_f32();
+                        let majority = colors.iter().max_by_key(|e| e.1).copied();
+                        let off_color = colors.iter().map(|e| e.1).sum::<u32>() - majority.map(|e| e.1).unwrap_or(0);
+                        let mut score = area + 1.2 * links + 0.3 * rng.next_f32() - 1.5 * off_color as f32;
                         if (w > d) == prefer_long_x && w != d {
                             score += 0.25;
                         }
@@ -196,7 +203,7 @@ impl<'g> Layout<'g> {
                             }
                         }
 
-                        let p = Placement { x: x0, y, z: z0, w, d, color: color.map(|c| c as u16).unwrap_or(FILLER_CODE) };
+                        let p = Placement { x: x0, y, z: z0, w, d, color: majority.map(|e| e.0 as u16).unwrap_or(FILLER_CODE) };
                         if best.map(|(s, _)| score > s).unwrap_or(true) {
                             best = Some((score, p));
                         }
@@ -208,7 +215,7 @@ impl<'g> Layout<'g> {
         best.expect("1x1 always fits").1
     }
 
-    /// Union bricks that share studs vertically; mark components touching layer 0 as grounded.
+    /// Union bricks that share studs vertically; mark the largest component as grounded.
     pub fn analyze(&mut self) -> Analysis {
         let n = self.bricks.len();
         let mut parent: Vec<usize> = (0..n).collect();
@@ -230,14 +237,20 @@ impl<'g> Layout<'g> {
                 }
             }
         }
-        let mut root_grounded = vec![false; n];
-        for (id, p) in self.bricks.iter().enumerate() {
-            if let Some(p) = p {
-                if p.y == 0 {
-                    let r = find(&mut parent, id);
-                    root_grounded[r] = true;
-                }
+        // The model is the largest stud-connected piece; anything else falls off when you lift
+        // it. (Requiring contact with the bottom layer misfires on birds and the like, whose
+        // lowest point is a foot connected sideways to the body.)
+        let mut size = vec![0u32; n];
+        for id in 0..n {
+            if self.bricks[id].is_some() {
+                let r = find(&mut parent, id);
+                size[r] += 1;
             }
+        }
+        let main = (0..n).max_by_key(|&r| size[r]);
+        let mut root_grounded = vec![false; n];
+        if let Some(main) = main {
+            root_grounded[main] = true;
         }
         let mut roots = std::collections::HashSet::new();
         let mut a = Analysis::default();

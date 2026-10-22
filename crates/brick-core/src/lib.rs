@@ -44,6 +44,8 @@ pub struct Options {
     pub hollow: u32,
     /// Reduce the model to this many colors before snapping to the palette; 0 = no reduction.
     pub color_count: u32,
+    /// Chroma multiplier applied before palette matching; generated textures are washed out.
+    pub vivid: f32,
     /// Color majority-filter passes.
     pub smooth: u32,
     /// Independent layout restarts; the best result wins.
@@ -62,7 +64,8 @@ impl Default for Options {
             studs: 32,
             layer: LayerKind::Brick,
             hollow: 0,
-            color_count: 6,
+            color_count: 8,
+            vivid: 1.3,
             smooth: 1,
             attempts: 6,
             repair: 60,
@@ -135,7 +138,7 @@ pub fn brickify(mesh: &Mesh, opts: &Options) -> BrickModel {
 
     if analysis.floating > 0 {
         warnings.push(format!(
-            "{} bricks are not connected to the ground through studs (thin or overhanging features)",
+            "{} bricks are not attached to the main model (thin or overhanging features)",
             analysis.floating
         ));
     }

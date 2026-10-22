@@ -85,7 +85,7 @@ pub struct Stats {
     pub voxels: u32,
     pub layers: u32,
     pub steps: u32,
-    /// Bricks not connected (through studs) to anything touching the ground layer.
+    /// Bricks not connected (through studs) to the main, largest piece.
     pub floating_bricks: u32,
     /// Connected brick components; 1 means the whole model holds together.
     pub components: u32,

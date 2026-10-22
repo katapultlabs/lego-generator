@@ -8,3 +8,4 @@ dist
 /samples/generated
 pkg
 .DS_Store
+/samples/private

@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "wasm": "wasm-pack build ../../crates/brick-wasm --target web --release --out-dir ../../apps/web/src/wasm",
-    "dev": "pnpm wasm && op run --env-file=../../.env -- vite",
-    "dev:offline": "pnpm wasm && vite",
+    "dev": "pnpm wasm && vite",
     "build": "pnpm wasm && tsc --noEmit && vite build",
     "preview": "vite preview"
   },

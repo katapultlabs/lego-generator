@@ -65,6 +65,26 @@ export interface BrickifyOptions {
   smooth: number;
   attempts: number;
   upAxis: 'y' | 'z';
+  /** Max distinct colors after reduction; 0 = no reduction. */
+  colorCount: number;
+  /** Saturation boost before matching to the palette, 1.0 (none) to 2.0. */
+  vivid: number;
 }
+
+/** A saved generation (mirrors `Generation` in server/api.ts). */
+export interface Generation {
+  id: string;
+  createdAt: string;
+  subject: string;
+  model: string;
+  segmenter: string;
+  seconds: number;
+  photoUrl: string;
+  cutoutUrl: string;
+  glbUrl: string;
+}
+
+/** What the source photo is shown as in the 3D scene. */
+export type PhotoMode = 'photo' | 'cutout' | 'off';
 
 export type ViewMode = 'mesh' | 'bricks' | 'both';

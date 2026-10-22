@@ -163,7 +163,8 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
             if a[3] <= 0.0 {
                 a = sum(&|_| true);
             }
-            (i, linear_to_lab([a[0] / a[3], a[1] / a[3], a[2] / a[3]]), a[3])
+            let lab = linear_to_lab([a[0] / a[3], a[1] / a[3], a[2] / a[3]]);
+            (i, [lab[0], lab[1] * opts.vivid, lab[2] * opts.vivid], a[3])
         })
         .collect();
     samples.sort_unstable_by_key(|s| s.0);
@@ -205,6 +206,8 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
 }
 
 /// Weighted k-means in Lab (k-means++ seeding). Returns centers and each sample's cluster.
+/// (Down-weighting lightness was tried: it rescued small hue patches but merged grey hubcaps
+/// into dark windows; plain Lab with 8 clusters kept both on the bird and car samples.)
 fn kmeans(samples: &[(usize, Lab, f32)], k: usize, seed: u64) -> (Vec<Lab>, Vec<usize>) {
     let d2 = |a: Lab, b: Lab| (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f32>();
     let mut rng = Rng::new(seed ^ 0xC0105);
