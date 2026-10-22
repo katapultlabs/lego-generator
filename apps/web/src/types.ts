@@ -1,6 +1,7 @@
 // Data contract shared with the Rust/WASM brick engine (serialized as camelCase JSON).
 
-export type LayerKind = 'brick' | 'plate';
+export type LayerKind = 'mixed' | 'brick' | 'plate';
+export type Facing = '+x' | '-x' | '+z' | '-z';
 
 export interface PaletteEntry {
   code: number;
@@ -16,6 +17,14 @@ export interface Brick {
   z: number;
   w: number;
   d: number;
+  /** Height in layers (mixed mode: 3 = brick, 1 = plate, 2 = slope). */
+  h: number;
+  /** 'slope' = LEGO 30 degree cheese slope (1x1, no studs). */
+  shape: 'box' | 'slope';
+  /** Slopes only: the direction (grid/world space) the slope descends toward. */
+  facing?: Facing;
+  /** True when the part is not attached to the main model. */
+  floating?: boolean;
   /** Palette code. */
   color: number;
   /** 1-based build step. */
@@ -27,6 +36,8 @@ export interface BomLine {
   name: string;
   color: number;
   count: number;
+  bricklinkPart: string | null;
+  bricklinkColor: number | null;
 }
 
 export interface BrickStats {
@@ -45,7 +56,7 @@ export interface BrickModel {
   units: {
     /** LDU per stud (20). */
     studLdu: number;
-    /** LDU per layer (24 brick, 8 plate). */
+    /** LDU per layer (8 for mixed/plate, 24 for bricks-only). */
     layerLdu: number;
     layer: LayerKind;
   };
@@ -69,6 +80,10 @@ export interface BrickifyOptions {
   colorCount: number;
   /** Saturation boost before matching to the palette, 1.0 (none) to 2.0. */
   vivid: number;
+  /** Smooth stair-steps with 30 degree slopes. */
+  slopes: boolean;
+  /** Max parts per build step. */
+  stepSize: number;
 }
 
 /** A saved generation (mirrors `Generation` in server/api.ts). */

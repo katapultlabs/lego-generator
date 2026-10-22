@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useGLTF } from '@react-three/drei';
-import { brickify, loadMesh, toLdraw } from './engine';
+import { brickify, loadMesh, toBricklinkXml, toLdraw } from './engine';
 import { fetchGenerations, fetchGlb, generateFromPhoto, type GenModelId } from './generate';
 import { photoViewFor } from './photoView';
 import { bomToCsv, saveBlob } from './lib/download';
 import type { BrickModel, BrickifyOptions, Generation, PhotoMode, ViewMode } from './types';
 import { Viewer } from './components/Viewer';
+import { Instructions } from './components/Instructions';
+import { Callout } from './components/PartImg';
+import { buildStepParts } from './lib/steps';
 import { BomCard, DownloadsCard, OptionsCard, Segmented, StatsCard } from './components/Panel';
 import { GalleryCard, ProgressCard, SetupCard, SourceCard } from './components/Generate';
 
-const DEFAULT_OPTS: BrickifyOptions = { studs: 32, layer: 'brick', hollow: 0, smooth: 0, attempts: 6, upAxis: 'y', colorCount: 8, vivid: 1.3 };
+const DEFAULT_OPTS: BrickifyOptions = { studs: 32, layer: 'mixed', hollow: 0, smooth: 0, attempts: 6, upAxis: 'y', colorCount: 8, vivid: 1.3, slopes: true, stepSize: 12 };
 const SAMPLE_URL = '/samples/beetle.glb';
 const IMAGE_EXT = /\.(jpe?g|png|webp|heic|heif)$/i;
 
@@ -47,6 +50,8 @@ export default function App() {
   const [followEnd, setFollowEnd] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [exploded, setExploded] = useState(false);
+  const [highlightLoose, setHighlightLoose] = useState(false);
+  const [mode, setMode] = useState<'model' | 'instructions'>('model');
   const [recenter, setRecenter] = useState(0);
   const [dragging, setDragging] = useState(false);
 
@@ -221,7 +226,7 @@ export default function App() {
   // ------------------------------------------------------------ playback
   useEffect(() => {
     if (!playing || total === 0) return;
-    const ms = Math.min(650, Math.max(150, 5200 / total));
+    const ms = Math.min(650, Math.max(220, 6000 / total));
     const id = setInterval(() => {
       const next = stepRef.current + 1;
       if (next >= total) {
@@ -280,6 +285,14 @@ export default function App() {
   const baseName = (sourceName ?? 'model').replace(/\.[^.]+$/, '');
   const dlJson = () => model && saveBlob(`${baseName}-bricks.json`, JSON.stringify(model, null, 2), 'application/json');
   const dlCsv = () => model && saveBlob(`${baseName}-parts.csv`, bomToCsv(model), 'text/csv');
+  const dlBricklink = async () => {
+    if (!model) return;
+    try {
+      saveBlob(`${baseName}-bricklink.xml`, await toBricklinkXml(model), 'application/xml');
+    } catch (e) {
+      setError(`BrickLink export failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
   const dlLdr = async () => {
     if (!model) return;
     try {
@@ -291,6 +304,23 @@ export default function App() {
 
   const empty = !meshUrl && !busy && !staged && !progress;
   const photoView = useMemo(() => photoViewFor(generation?.model), [generation]);
+  const stepParts = useMemo(() => (model ? buildStepParts(model) : null), [model]);
+  const stepItems = stepParts && step >= 1 ? stepParts.get(Math.min(step, total)) : undefined;
+  const title = generation?.subject?.trim() || 'Your build';
+  const showLoose = () => {
+    setMode('model');
+    setView((v) => (v === 'mesh' ? 'bricks' : v));
+    setHighlightLoose(true);
+  };
+  const modeSwitch = model ? (
+    <div className="modebar">
+      <Segmented<'model' | 'instructions'>
+        value={mode}
+        onChange={setMode}
+        options={[{ value: 'model', label: 'Model' }, { value: 'instructions', label: 'Instructions' }]}
+      />
+    </div>
+  ) : null;
   const meshOnly = !!meshUrl && !model; // show the source mesh until the first brick model arrives
 
   return (
@@ -302,6 +332,7 @@ export default function App() {
           view={meshOnly ? 'mesh' : view}
           step={step}
           exploded={exploded}
+          highlightLoose={highlightLoose}
           upAxis={opts.upAxis}
           recenter={recenter}
           photoViewTick={photoViewTick}
@@ -323,6 +354,7 @@ export default function App() {
 
         {meshUrl && (
           <div className="viewbar">
+            {modeSwitch}
             <Segmented<ViewMode>
               value={view}
               onChange={setView}
@@ -394,6 +426,28 @@ export default function App() {
           </div>
         )}
 
+        {mode === 'instructions' && model && (
+          <Instructions
+            model={model}
+            title={title}
+            photoUrl={photoUrl}
+            photoView={photoView}
+            upAxis={opts.upAxis}
+            turn={turn}
+            modeSwitch={modeSwitch}
+          />
+        )}
+
+        {model && (view === 'bricks' || view === 'both') && stepItems && stepItems.length > 0 && (
+          <div className="stepcard" aria-live="polite">
+            <div className="stepcard-head">
+              <b>Step {Math.min(step, total)}</b>
+              <span>of {total} &middot; {stepItems.reduce((n, i) => n + i.count, 0)} {stepItems.reduce((n, i) => n + i.count, 0) === 1 ? 'part' : 'parts'}</span>
+            </div>
+            <Callout items={stepItems} />
+          </div>
+        )}
+
         {model && (view === 'bricks' || view === 'both') && (
           <div className="playbar">
             <button className="icon" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play build'} title={playing ? 'Pause' : 'Play build'}>
@@ -407,6 +461,15 @@ export default function App() {
             <span className="stepnum">{step} / {total}</span>
             <button className="chip" onClick={showAll} disabled={step >= total}>Show all</button>
             <button className={`chip${exploded ? ' on' : ''}`} onClick={() => setExploded((x) => !x)} aria-pressed={exploded}>Explode</button>
+            <button
+              className={`chip warn${highlightLoose ? ' on' : ''}`}
+              onClick={() => setHighlightLoose((x) => !x)}
+              aria-pressed={highlightLoose}
+              disabled={model.stats.floatingBricks === 0}
+              title={model.stats.floatingBricks === 0 ? 'Every part is attached' : 'Tint parts that are not attached to the model'}
+            >
+              Highlight loose parts
+            </button>
             <button className="chip" onClick={() => setRecenter((n) => n + 1)} title="Re-frame the camera">Recenter</button>
           </div>
         )}
@@ -454,9 +517,9 @@ export default function App() {
 
         <OptionsCard opts={opts} onChange={setOpts} computing={computing} disabled={!meshUrl} />
 
-        {model && <StatsCard model={model} stale={computing} />}
+        {model && <StatsCard model={model} stale={computing} onShowLoose={showLoose} />}
         {model && <BomCard model={model} />}
-        <DownloadsCard disabled={!model} onJson={dlJson} onLdraw={dlLdr} onCsv={dlCsv} />
+        <DownloadsCard disabled={!model} onJson={dlJson} onLdraw={dlLdr} onCsv={dlCsv} onBricklink={dlBricklink} />
       </aside>
     </div>
   );

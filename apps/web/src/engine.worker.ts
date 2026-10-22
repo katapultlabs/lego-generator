@@ -1,7 +1,7 @@
 // Runs the Rust brick engine (WASM) off the main thread.
-// Messages: { id, type: 'load' | 'brickify' | 'ldraw', payload } -> { id, ok, result | error }.
+// Messages: { id, type: 'load' | 'brickify' | 'ldraw' | 'bricklink', payload } -> { id, ok, result | error }.
 
-import init, { Engine, toLdraw } from './wasm/brick_wasm.js';
+import init, { Engine, bricklinkXml, toLdraw } from './wasm/brick_wasm.js';
 
 const ready = init();
 let engine: Engine | null = null;
@@ -24,6 +24,8 @@ self.onmessage = async (e: MessageEvent<{ id: number; type: string; payload: any
       result = model;
     } else if (type === 'ldraw') {
       result = toLdraw(JSON.stringify(payload.model), payload.name);
+    } else if (type === 'bricklink') {
+      result = bricklinkXml(JSON.stringify(payload.model));
     } else {
       throw new Error(`unknown message ${type}`);
     }

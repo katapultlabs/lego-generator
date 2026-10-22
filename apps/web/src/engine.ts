@@ -51,3 +51,8 @@ export async function brickify(opts: BrickifyOptions): Promise<BrickModel> {
 export async function toLdraw(model: BrickModel): Promise<string> {
   return call<string>('ldraw', { model, name: 'model' });
 }
+
+/** Serialize a model to a BrickLink wanted list (.xml). */
+export async function toBricklinkXml(model: BrickModel): Promise<string> {
+  return call<string>('bricklink', { model });
+}

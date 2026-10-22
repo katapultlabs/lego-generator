@@ -1,0 +1,140 @@
+/* Building-instructions booklet. Everything inside a sheet is sized in cqw so a page looks the same
+   on screen and on paper (print sets the sheet to 297 x 210 mm). */
+
+.booklet {
+  position: absolute; inset: 0; z-index: 3; overflow-y: auto; background: #d8d2c2; padding: 0 0 40px;
+}
+.booklet-bar {
+  position: sticky; top: 0; z-index: 4; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; margin-bottom: 18px; background: rgba(246, 243, 236, 0.94); backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.bar-group { display: flex; align-items: center; gap: 8px; }
+.bar-spacer { flex: 1; }
+.booklet-bar .seg { background: var(--panel); }
+.preview-exit { display: none; position: fixed; top: 14px; right: 14px; z-index: 20; }
+
+.sheet {
+  container-type: inline-size; position: relative; overflow: hidden; background: #fff; color: #17181d;
+  width: min(1100px, calc(100% - 32px)); aspect-ratio: 297 / 210; margin: 0 auto 22px; border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(40, 30, 10, 0.22), 0 1px 3px rgba(40, 30, 10, 0.2);
+  font-size: 1.5cqw;
+}
+
+.skeleton { display: block; width: 100%; height: 100%; position: relative; }
+.skeleton i {
+  position: absolute; inset: 14% 18%; border-radius: 3cqw;
+  background: linear-gradient(100deg, #f1eee6 30%, #faf8f3 50%, #f1eee6 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer { to { background-position: -150% 0; } }
+
+/* ------------------------------------------------------------ cover */
+.cover { background: #fff6cf; }
+.cover-band {
+  position: absolute; left: 0; right: 0; top: 0; height: 9cqw; background: var(--red); color: #fff;
+  display: flex; align-items: center; gap: 1.2cqw; padding: 0 3cqw;
+}
+.cover-band b { font-size: 2.6cqw; letter-spacing: 0.2cqw; }
+.cover-kind { margin-left: auto; font-size: 1.9cqw; opacity: 0.92; text-transform: uppercase; letter-spacing: 0.25cqw; font-weight: 700; }
+.cover-logo { position: relative; width: 4.4cqw; height: 2.8cqw; background: #fff; border-radius: 0.5cqw; }
+.cover-logo i { position: absolute; top: -0.7cqw; width: 1.3cqw; height: 0.8cqw; background: #fff; border-radius: 0.3cqw; }
+.cover-logo i:first-child { left: 0.7cqw; }
+.cover-logo i:last-child { right: 0.7cqw; }
+.cover-title {
+  position: absolute; left: 3.5cqw; top: 12cqw; max-width: 44cqw; margin: 0; font-size: 7.4cqw; line-height: 1; letter-spacing: -0.2cqw;
+  font-weight: 900; text-transform: capitalize; overflow-wrap: anywhere;
+}
+.cover-hero { position: absolute; right: 2cqw; top: 10cqw; width: 58cqw; height: 43.5cqw; }
+.cover-hero img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 1.4cqw 1.2cqw rgba(60, 40, 0, 0.22)); }
+.cover-photo {
+  position: absolute; left: 3.5cqw; bottom: 17cqw; width: 26cqw; margin: 0; background: #fff; padding: 1cqw 1cqw 0.8cqw; border-radius: 0.8cqw;
+  box-shadow: 0 1cqw 2.4cqw rgba(60, 40, 0, 0.25); transform: rotate(-3deg);
+}
+.cover-photo img { display: block; width: 100%; max-height: 22cqw; object-fit: cover; border-radius: 0.3cqw; }
+.cover-photo figcaption { font-size: 1.3cqw; text-align: center; color: #7a7466; margin-top: 0.6cqw; }
+.cover-facts {
+  position: absolute; left: 3cqw; right: 3cqw; bottom: 3cqw; margin: 0; padding: 0; list-style: none; display: grid;
+  grid-template-columns: 0.8fr 0.8fr 1.4fr 1.6fr; gap: 1.4cqw;
+}
+.cover-facts li { background: #fff; border-radius: 1.2cqw; padding: 1.3cqw 1.8cqw; box-shadow: 0 0.3cqw 0 rgba(0, 0, 0, 0.12); }
+.cover-facts b { display: block; font-size: 3.1cqw; line-height: 1.1; white-space: nowrap; }
+.cover-facts span { font-size: 1.5cqw; color: #7a7466; }
+
+/* ------------------------------------------------------------ inventory */
+.sheet-head {
+  position: absolute; left: 0; right: 0; top: 0; height: 9cqw; background: #ffd21f; display: flex; align-items: center;
+  justify-content: space-between; padding: 0 3cqw;
+}
+.sheet-head h2 { margin: 0; font-size: 3.6cqw; font-weight: 900; text-transform: none; letter-spacing: 0; color: inherit; }
+.sheet-head span { font-size: 1.8cqw; font-weight: 700; }
+.tiles-grid {
+  position: absolute; left: 2.4cqw; right: 2.4cqw; top: 11.5cqw; bottom: 2.4cqw; margin: 0; padding: 0; list-style: none;
+  display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 1.6cqw;
+}
+.ptile {
+  display: flex; align-items: center; gap: 1.2cqw; padding: 1cqw; background: #faf7ee;
+  border: 0.2cqw solid #ece5d1; border-radius: 1.2cqw; min-height: 0;
+}
+.ptile .partimg { flex: none; width: 11cqw; height: 11cqw; }
+.ptile-text { min-width: 0; display: flex; flex-direction: column; gap: 0.2cqw; }
+.ptile-count { font-size: 3.2cqw; line-height: 1; font-weight: 900; }
+.ptile-name { font-size: 1.55cqw; font-weight: 700; line-height: 1.15; }
+.ptile small { font-size: 1.25cqw; color: #6a6454; line-height: 1.25; display: flex; align-items: center; gap: 0.5cqw; }
+.ptile small.ids { font-size: 1.1cqw; color: #98917f; display: block; }
+.dot { display: inline-block; width: 1.2cqw; height: 1.2cqw; border-radius: 50%; border: 0.1cqw solid rgba(0, 0, 0, 0.3); flex: none; }
+
+/* ------------------------------------------------------------ part thumbnails (also used in the 3D view) */
+.partimg { display: block; position: relative; flex: none; width: 100%; aspect-ratio: 1; }
+.partimg img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.partimg-ph { display: block; position: absolute; inset: 30%; border-radius: 22%; opacity: 0.22; }
+
+.callout {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 0.6em; align-content: flex-start;
+}
+.callout li { display: flex; align-items: flex-end; gap: 0.15em; }
+.callout .partimg { width: 1.9em; }
+.callout b { font-size: 0.78em; font-weight: 800; line-height: 1; padding-bottom: 0.2em; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------ build steps */
+.sheet.steps { display: grid; gap: 1.2cqw; padding: 1.4cqw; background: #fff; }
+.sheet.steps.n1 { grid-template: 1fr / 1fr; }
+.sheet.steps.n2 { grid-template: 1fr / 1fr 1fr; }
+.sheet.steps.n4 { grid-template: 1fr 1fr / 1fr 1fr; }
+.cell {
+  container-type: inline-size; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative;
+  border: 0.18cqw solid #ebe5d4; border-radius: 1.4cqw; background: #fff; overflow: hidden; --s: 1;
+}
+.sheet.n1 .cell { --s: 0.62; }
+.sheet.n4 .cell { --s: 0.7; }
+.cell-head { display: flex; align-items: flex-start; gap: calc(var(--s) * 2.4cqw); padding: calc(var(--s) * 2.2cqw) calc(var(--s) * 2.6cqw) 0; flex: none; }
+.stepno {
+  flex: none; font-size: calc(var(--s) * 11cqw); line-height: 0.9; font-weight: 900; letter-spacing: -0.3cqw; min-width: 1.1ch;
+}
+.cell-head .callout {
+  font-size: calc(var(--s) * 4.8cqw); padding: 0.45em 0.7em 0.5em; border: 0.25cqw solid #17181d; border-radius: 0.7em; background: #fffdf4;
+  max-width: 100%; min-width: 0; gap: 0.5em 0.8em;
+}
+.cell-of { margin-left: auto; font-size: calc(var(--s) * 2.4cqw); color: #a39c88; white-space: nowrap; padding-top: 0.3em; font-variant-numeric: tabular-nums; }
+.cell-img { flex: 1; min-height: 0; position: relative; }
+.cell-img img { position: absolute; inset: calc(var(--s) * 1cqw); width: calc(100% - var(--s) * 2cqw); height: calc(100% - var(--s) * 2cqw); object-fit: contain; display: block; }
+.cell-img .skeleton { position: absolute; inset: 0; }
+
+/* ------------------------------------------------------------ overlays */
+.prep { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; background: rgba(30, 25, 10, 0.45); backdrop-filter: blur(3px); }
+.prep-card { width: min(420px, calc(100% - 32px)); background: var(--panel); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 12px; box-shadow: var(--shadow); }
+.prep-card b { font-size: 18px; }
+.prep-bar { height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.prep-bar i { display: block; height: 100%; background: var(--red); transition: width 0.15s; }
+
+/* ------------------------------------------------------------ "parts for this step" overlay in the 3D view */
+.stepcard {
+  position: absolute; left: 18px; bottom: 82px; max-width: min(420px, calc(100% - 36px)); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px 10px; box-shadow: var(--shadow); font-size: 15px;
+}
+.stepcard-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.stepcard-head b { font-size: 22px; line-height: 1; font-weight: 900; }
+.stepcard-head span { color: var(--muted); font-size: 12px; }
+.stepcard .callout { font-size: 15px; gap: 6px 12px; }
+.stepcard .callout .partimg { width: 38px; }
+.stepcard .callout b { font-size: 13px; }
+.ptile small.ids span { display: block; white-space: nowrap; }

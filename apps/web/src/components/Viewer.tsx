@@ -13,6 +13,7 @@ interface ViewerProps {
   view: ViewMode;
   step: number;
   exploded: boolean;
+  highlightLoose: boolean;
   upAxis: 'y' | 'z';
   /** bump to re-frame the camera */
   recenter: number;
@@ -40,7 +41,7 @@ export function modelSize(model: BrickModel | null): THREE.Vector3 {
 }
 
 export function Viewer(props: ViewerProps) {
-  const { model, meshUrl, view, step, exploded, upAxis, recenter, photoViewTick, photoView, photoUrl, cutoutUrl, photoMode, turn, onMeshError } = props;
+  const { model, meshUrl, view, step, exploded, highlightLoose, upAxis, recenter, photoViewTick, photoView, photoUrl, cutoutUrl, photoMode, turn, onMeshError } = props;
   const size = useMemo(() => modelSize(model), [model]);
   const sizeKey = `${size.x}|${size.y}|${size.z}`;
   const stableSize = useMemo(() => size, [sizeKey]);
@@ -79,7 +80,7 @@ export function Viewer(props: ViewerProps) {
             </MeshBoundary>
           )}
         </Suspense>
-        {showBricks && model && <BrickModelView model={model} step={step} exploded={exploded} />}
+        {showBricks && model && <BrickModelView model={model} step={step} exploded={exploded} highlightLoose={highlightLoose} />}
       </Turntable>
       {layout.photo && printTex && meshUrl && (
         <PhotoPrint

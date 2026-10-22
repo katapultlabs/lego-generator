@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import type { BrickModel } from '../types';
+import { FACING_ANGLE, GAP, STUD_HEIGHT, boxGeometry, brickMaterial, slopeGeometry, studGeometry } from '../lib/partGeometry';
 
-const GAP = 0.03; // visible seam between neighbouring bricks, in studs
 const DROP_DUR = 0.8; // seconds for one brick to fall into place
-const STUD_RADIUS = 0.3;
-const STUD_HEIGHT = 0.2;
 
 function easeOutBounce(t: number): number {
   const n1 = 7.5625;
@@ -23,14 +20,24 @@ interface Group {
   indices: Int32Array;
 }
 
+/** How parts are tinted when the rig is rebuilt. */
+export interface RigStyle {
+  /** Parts from earlier steps are shown washed out; this step and later are full color. */
+  focusStep?: number;
+  /** Tint parts that are not attached to the model red (pulsing) and wash out everything else. */
+  loose?: boolean;
+}
+
+const LOOSE_RED = new THREE.Color('#e5121b');
+
 /**
- * All per-brick state lives in typed arrays and is written straight into InstancedMesh buffers, so
- * ~20k bricks (and their studs) cost one draw call per footprint plus one for studs.
+ * All per-part state lives in typed arrays and is written straight into InstancedMesh buffers, so
+ * ~20k parts (and their studs) cost one draw call per (shape, footprint, height) plus one for studs.
  */
 export function createRig(model: BrickModel) {
   const { bricks, dims, units, palette } = model;
   const n = bricks.length;
-  const h = units.layerLdu / units.studLdu;
+  const lh = units.layerLdu / units.studLdu; // world height of one layer
   const offX = dims.x / 2;
   const offZ = dims.z / 2;
   const colors = new Map(palette.map((p) => [p.code, new THREE.Color(p.hex)]));
@@ -39,50 +46,62 @@ export function createRig(model: BrickModel) {
   const cx = new Float32Array(n);
   const cy = new Float32Array(n);
   const cz = new Float32Array(n);
+  const rc = new Float32Array(n).fill(1); // cos / sin of the part's yaw (slopes)
+  const rs = new Float32Array(n);
   const stepOf = new Int32Array(n);
   const layerOf = new Int32Array(n);
   const delay = new Float32Array(n);
   const rgb = new Float32Array(n * 3);
+  const wash = new Float32Array(n * 3); // desaturated, lightened variant
+  const loose = new Uint8Array(n);
   const start = new Float32Array(n).fill(-1);
   const yoff = new Float32Array(n);
   const vis = new Uint8Array(n);
+  let looseCount = 0;
 
-  const byFootprint = new Map<string, number[]>();
+  const byKind = new Map<string, number[]>();
   const tmp = new THREE.Color();
   for (let i = 0; i < n; i++) {
     const b = bricks[i];
+    const hh = b.h ?? 1;
+    const slope = b.shape === 'slope';
     cx[i] = b.x + b.w / 2 - offX;
-    cy[i] = b.y * h + h / 2;
+    cy[i] = (b.y + hh / 2) * lh;
     cz[i] = b.z + b.d / 2 - offZ;
+    if (slope) {
+      const a = FACING_ANGLE[b.facing ?? '+x'];
+      rc[i] = Math.cos(a);
+      rs[i] = Math.sin(a);
+    }
     stepOf[i] = b.step;
     layerOf[i] = b.y;
+    if (b.floating) {
+      loose[i] = 1;
+      looseCount++;
+    }
     const c = colors.get(b.color) ?? fallback;
-    tmp.copy(c);
-    rgb[i * 3] = tmp.r;
-    rgb[i * 3 + 1] = tmp.g;
-    rgb[i * 3 + 2] = tmp.b;
+    rgb[i * 3] = c.r;
+    rgb[i * 3 + 1] = c.g;
+    rgb[i * 3 + 2] = c.b;
+    // washed-out classic-instruction look for parts from earlier steps
+    const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+    tmp.setRGB(c.r + (lum - c.r) * 0.55, c.g + (lum - c.g) * 0.55, c.b + (lum - c.b) * 0.55);
+    wash[i * 3] = tmp.r + (1 - tmp.r) * 0.3;
+    wash[i * 3 + 1] = tmp.g + (1 - tmp.g) * 0.3;
+    wash[i * 3 + 2] = tmp.b + (1 - tmp.b) * 0.3;
     // build "wave" across each layer, plus a little jitter
     const wave = (b.x + b.z) / Math.max(1, dims.x + dims.z);
     delay[i] = wave * 0.5 + ((i * 2654435761) % 1000) / 1000 * 0.12;
-    const key = `${b.w}x${b.d}`;
-    const arr = byFootprint.get(key);
+    const key = `${slope ? 'slope' : 'box'}|${b.w}x${b.d}x${hh}`;
+    const arr = byKind.get(key);
     if (arr) arr.push(i);
-    else byFootprint.set(key, [i]);
+    else byKind.set(key, [i]);
   }
 
-  const material = new THREE.MeshPhysicalMaterial({
-    color: 0xffffff,
-    roughness: 0.3,
-    metalness: 0,
-    clearcoat: 0.55,
-    clearcoatRoughness: 0.22,
-    envMapIntensity: 1,
-  });
-
+  const material = brickMaterial();
   const root = new THREE.Group();
   const geometries: THREE.BufferGeometry[] = [];
   const segments = n > 8000 ? 1 : 2;
-  const radius = Math.min(0.05, (h - GAP) / 3);
 
   const makeInstanced = (geo: THREE.BufferGeometry, cap: number, shadows: boolean) => {
     const mesh = new THREE.InstancedMesh(geo, material, Math.max(1, cap));
@@ -105,53 +124,57 @@ export function createRig(model: BrickModel) {
   };
 
   const groups: Group[] = [];
-  for (const [key, list] of byFootprint) {
-    const [w, d] = key.split('x').map(Number);
-    const geo = new RoundedBoxGeometry(w - GAP, h - GAP, d - GAP, segments, radius);
+  for (const [key, list] of byKind) {
+    const [shape, dim] = key.split('|');
+    const [w, d, hh] = dim.split('x').map(Number);
+    const geo = shape === 'slope' ? slopeGeometry(hh * lh) : boxGeometry(w, d, hh * lh, segments);
     geometries.push(geo);
     groups.push({ mesh: makeInstanced(geo, list.length, true), indices: Int32Array.from(list) });
   }
 
-  // ---- studs: one per top cell, skipping those permanently buried under a brick placed no later
-  const occ = new Int32Array(dims.x * dims.y * dims.z); // step of brick at cell (0 = empty)
+  // ---- studs: one per top cell of a box part, skipped where another part sits directly on top
+  // (a part placed no later is buried for good; a later one buries the stud from its step on).
+  const occ = new Int32Array(dims.x * dims.y * dims.z); // step of the part at cell (0 = empty)
   const cell = (x: number, y: number, z: number) => (y * dims.z + z) * dims.x + x;
   for (const b of bricks)
-    for (let k = 0; k < b.d; k++)
-      for (let j = 0; j < b.w; j++) {
-        const x = b.x + j, z = b.z + k;
-        if (x < dims.x && z < dims.z && b.y < dims.y) occ[cell(x, b.y, z)] = b.step;
-      }
+    for (let yy = b.y; yy < b.y + (b.h ?? 1); yy++)
+      for (let k = 0; k < b.d; k++)
+        for (let j = 0; j < b.w; j++) {
+          const x = b.x + j, z = b.z + k;
+          if (x < dims.x && z < dims.z && yy < dims.y) occ[cell(x, yy, z)] = b.step;
+        }
   const sx: number[] = [], sy: number[] = [], sz: number[] = [], sb: number[] = [], sc: number[] = [];
   for (let i = 0; i < n; i++) {
     const b = bricks[i];
+    if (b.shape === 'slope') continue;
+    const top = b.y + (b.h ?? 1);
     for (let k = 0; k < b.d; k++)
       for (let j = 0; j < b.w; j++) {
         const x = b.x + j, z = b.z + k;
         let cover = Infinity;
-        if (b.y + 1 < dims.y && x < dims.x && z < dims.z) {
-          const above = occ[cell(x, b.y + 1, z)];
+        if (top < dims.y && x < dims.x && z < dims.z) {
+          const above = occ[cell(x, top, z)];
           if (above > 0) {
             if (above <= b.step) continue; // never visible
             cover = above;
           }
         }
         sx.push(x + 0.5 - offX);
-        sy.push((b.y + 1) * h - GAP / 2);
+        sy.push(top * lh - GAP / 2);
         sz.push(z + 0.5 - offZ);
         sb.push(i);
         sc.push(cover);
       }
   }
   const studCount = sb.length;
-  const studGeo = new THREE.CylinderGeometry(STUD_RADIUS, STUD_RADIUS, STUD_HEIGHT, n > 8000 ? 10 : 16);
-  studGeo.translate(0, STUD_HEIGHT / 2 - 0.01, 0);
+  const studGeo = studGeometry(n > 8000 ? 10 : 16);
   geometries.push(studGeo);
   const studMesh = makeInstanced(studGeo, studCount, true);
 
-  const dropH = 5 + h * 3;
-  const explodeGap = h * 0.85;
+  const dropH = 5 + lh * 3;
+  const explodeGap = lh * 0.85;
 
-  function rebuild(step: number, now: number, explode: number): boolean {
+  function rebuild(step: number, now: number, explode: number, style: RigStyle = {}): boolean {
     let animating = false;
     for (let i = 0; i < n; i++) {
       vis[i] = 0;
@@ -168,6 +191,27 @@ export function createRig(model: BrickModel) {
       yoff[i] = off + layerOf[i] * explodeGap * explode;
     }
 
+    const highlight = !!style.loose && looseCount > 0;
+    const pulse = 0.5 + 0.5 * Math.sin(now * 5);
+    if (highlight) animating = true;
+    const focus = style.focusStep ?? 0;
+    const setColor = (arr: Float32Array, o: number, i: number) => {
+      let src = rgb;
+      if (highlight) {
+        if (loose[i]) {
+          const k = 0.55 + 0.4 * pulse;
+          arr[o] = rgb[i * 3] + (LOOSE_RED.r - rgb[i * 3]) * k;
+          arr[o + 1] = rgb[i * 3 + 1] + (LOOSE_RED.g - rgb[i * 3 + 1]) * k;
+          arr[o + 2] = rgb[i * 3 + 2] + (LOOSE_RED.b - rgb[i * 3 + 2]) * k;
+          return;
+        }
+        src = wash;
+      } else if (focus > 0 && stepOf[i] < focus) src = wash;
+      arr[o] = src[i * 3];
+      arr[o + 1] = src[i * 3 + 1];
+      arr[o + 2] = src[i * 3 + 2];
+    };
+
     for (const g of groups) {
       const mArr = g.mesh.instanceMatrix.array as Float32Array;
       const cArr = g.mesh.instanceColor!.array as Float32Array;
@@ -176,13 +220,14 @@ export function createRig(model: BrickModel) {
         const i = g.indices[k];
         if (!vis[i]) continue;
         const o = c * 16;
+        mArr[o] = rc[i];
+        mArr[o + 2] = -rs[i];
+        mArr[o + 8] = rs[i];
+        mArr[o + 10] = rc[i];
         mArr[o + 12] = cx[i];
         mArr[o + 13] = cy[i] + yoff[i];
         mArr[o + 14] = cz[i];
-        const co = c * 3;
-        cArr[co] = rgb[i * 3];
-        cArr[co + 1] = rgb[i * 3 + 1];
-        cArr[co + 2] = rgb[i * 3 + 2];
+        setColor(cArr, c * 3, i);
         c++;
       }
       g.mesh.count = c;
@@ -201,10 +246,7 @@ export function createRig(model: BrickModel) {
         mArr[o + 12] = sx[k];
         mArr[o + 13] = sy[k] + yoff[i];
         mArr[o + 14] = sz[k];
-        const co = c * 3;
-        cArr[co] = rgb[i * 3];
-        cArr[co + 1] = rgb[i * 3 + 1];
-        cArr[co + 2] = rgb[i * 3 + 2];
+        setColor(cArr, c * 3, i);
         c++;
       }
       studMesh.count = c;
@@ -231,17 +273,19 @@ export function createRig(model: BrickModel) {
     }
   }
 
-  return { group: root, rebuild, onStepChange, dispose, studCount };
+  return { group: root, rebuild, onStepChange, dispose, studCount, looseCount, studHeight: STUD_HEIGHT };
 }
 
 interface Props {
   model: BrickModel;
-  /** Bricks with step <= this are shown. */
+  /** Parts with step <= this are shown. */
   step: number;
   exploded: boolean;
+  /** Tint parts that are not attached to the model red. */
+  highlightLoose: boolean;
 }
 
-export function BrickModelView({ model, step, exploded }: Props) {
+export function BrickModelView({ model, step, exploded, highlightLoose }: Props) {
   const rig = useMemo(() => createRig(model), [model]);
   useEffect(() => () => rig.dispose(), [rig]);
   const invalidate = useThree((s) => s.invalidate);
@@ -255,8 +299,9 @@ export function BrickModelView({ model, step, exploded }: Props) {
   });
 
   useEffect(() => {
+    meta.current.dirty = true;
     invalidate();
-  }, [rig, step, exploded, invalidate]);
+  }, [rig, step, exploded, highlightLoose, invalidate]);
 
   useFrame((_, delta) => {
     const m = meta.current;
@@ -281,7 +326,7 @@ export function BrickModelView({ model, step, exploded }: Props) {
       m.dirty = true;
     }
     if (m.dirty || m.animating) {
-      m.animating = rig.rebuild(step, now, m.e);
+      m.animating = rig.rebuild(step, now, m.e, { loose: highlightLoose });
       m.dirty = false;
     }
     if (m.animating || moving) invalidate();

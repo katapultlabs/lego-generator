@@ -265,3 +265,20 @@ input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border-radius
   .setup-photo { width: 100%; }
 }
 .viewbar { width: max-content; max-width: calc(100% - 24px); }
+
+/* ------------------------------------------------------------ v2: mixed parts, slopes, instructions */
+.seg.vertical { display: flex; flex-direction: column; }
+.field .seg.vertical button { text-align: left; }
+.seg button.on { cursor: default; }
+.field.toggle { cursor: pointer; }
+.field.toggle input { width: 18px; height: 18px; accent-color: var(--red); }
+button.tile { text-align: left; font: inherit; color: inherit; }
+button.tile.link { cursor: pointer; }
+button.tile.link:hover { border-color: var(--red); }
+.dl { grid-template-columns: repeat(3, 1fr); }
+.dl .btn.wide { grid-column: 1 / -1; }
+.dl-help { margin: 10px 0 0; }
+.modebar .seg { box-shadow: var(--shadow); background: var(--panel); }
+.modebar .seg button { padding: 7px 16px; }
+.chip.warn.on { background: var(--red); border-color: var(--red); color: #fff; }
+.tiles { grid-template-columns: repeat(2, 1fr); }
