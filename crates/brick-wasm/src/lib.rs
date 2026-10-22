@@ -34,6 +34,12 @@ pub fn to_ldraw(model: &str, name: &str) -> Result<String, JsError> {
     Ok(export::to_ldraw(&model, name))
 }
 
+#[wasm_bindgen(js_name = bricklinkXml)]
+pub fn bricklink_xml(model: &str) -> Result<String, JsError> {
+    let model: BrickModel = serde_json::from_str(model)?;
+    Ok(brick_core::bricklink::wanted_list_xml(&model))
+}
+
 #[wasm_bindgen(js_name = bomCsv)]
 pub fn bom_csv(model: &str) -> Result<String, JsError> {
     let model: BrickModel = serde_json::from_str(model)?;

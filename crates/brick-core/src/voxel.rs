@@ -80,7 +80,8 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
     let mut studs = opts.studs.max(1) as f32;
     let dims = |studs: f32| {
         let scale = studs * 20.0 / longest;
-        let n: [usize; 3] = std::array::from_fn(|k| ((ext[k] * scale / vs[k]).ceil() as usize).max(1));
+        let n: [usize; 3] =
+            std::array::from_fn(|k| ((ext[k] * scale / vs[k]).ceil() as usize).max(1));
         (scale, n)
     };
     let (mut scale, mut n) = dims(studs);
@@ -89,12 +90,21 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
         (scale, n) = dims(studs);
     }
     if studs < opts.studs as f32 {
-        warnings.push(format!("model too large; reduced to {} studs", studs as u32));
+        warnings.push(format!(
+            "model too large; reduced to {} studs",
+            studs as u32
+        ));
     }
-    let to_cell = |p: [f32; 3]| -> [f32; 3] { std::array::from_fn(|k| (p[k] - lo[k]) * scale / vs[k]) };
+    let to_cell =
+        |p: [f32; 3]| -> [f32; 3] { std::array::from_fn(|k| (p[k] - lo[k]) * scale / vs[k]) };
 
     let total = n[0] * n[1] * n[2];
-    let mut grid = Grid { nx: n[0], ny: n[1], nz: n[2], cells: vec![EMPTY; total] };
+    let mut grid = Grid {
+        nx: n[0],
+        ny: n[1],
+        nz: n[2],
+        cells: vec![EMPTY; total],
+    };
     // Per occupied cell, area-weighted linear RGB [r, g, b, weight] binned by the facing of the
     // surface it came from (+x, -x, +y, -y, +z, -z). Lets a cell take its color from the side
     // that faces open air instead of averaging in interior surfaces (a car's headliner, seats).
@@ -103,17 +113,28 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
     for t in &mesh.triangles {
         let wp = [map(t.p[0]), map(t.p[1]), map(t.p[2])];
         let (e1, e2) = (sub(wp[1], wp[0]), sub(wp[2], wp[0]));
-        let normal = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
-        let axis = (0..3).max_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs())).unwrap_or(1);
+        let normal = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
+        let axis = (0..3)
+            .max_by(|&a, &b| normal[a].abs().total_cmp(&normal[b].abs()))
+            .unwrap_or(1);
         let bin = axis * 2 + usize::from(normal[axis] < 0.0);
 
         let q = [to_cell(wp[0]), to_cell(wp[1]), to_cell(wp[2])];
-        let e = |a: usize, b: usize| ((0..3).map(|k| (q[a][k] - q[b][k]).powi(2)).sum::<f32>()).sqrt();
+        let e =
+            |a: usize, b: usize| ((0..3).map(|k| (q[a][k] - q[b][k]).powi(2)).sum::<f32>()).sqrt();
         let longest_edge = e(0, 1).max(e(1, 2)).max(e(2, 0));
         let steps = ((longest_edge * 2.0).ceil() as usize).clamp(1, 512);
         let u = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]];
         let v = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]];
-        let cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+        let cross = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
         let area = 0.5 * (cross[0].powi(2) + cross[1].powi(2) + cross[2].powi(2)).sqrt();
         let count = (steps + 1) * (steps + 2) / 2 + 1;
         let w = area / count as f32 + 1e-6;
@@ -157,7 +178,9 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
         .map(|(&i, bins)| {
             let open = open_sides(&grid, &outside, i);
             let sum = |pick: &dyn Fn(usize) -> bool| {
-                (0..6).filter(|&b| pick(b)).fold([0f32; 4], |s, b| std::array::from_fn(|k| s[k] + bins[b][k]))
+                (0..6)
+                    .filter(|&b| pick(b))
+                    .fold([0f32; 4], |s, b| std::array::from_fn(|k| s[k] + bins[b][k]))
             };
             let mut a = sum(&|b| open[b]);
             if a[3] <= 0.0 {
@@ -176,7 +199,10 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
         // palette entries. Cluster the model's colors first, then snap each cluster.
         let (centers, assignment) = kmeans(&samples, opts.color_count as usize, opts.seed);
         let target = merge_shaded(&centers);
-        let codes: Vec<i16> = target.iter().map(|&t| matcher.nearest_lab(centers[t]) as i16).collect();
+        let codes: Vec<i16> = target
+            .iter()
+            .map(|&t| matcher.nearest_lab(centers[t]) as i16)
+            .collect();
         for (s, &k) in samples.iter().zip(&assignment) {
             grid.cells[s.0] = codes[k];
         }
@@ -199,10 +225,55 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
         }
     }
 
+    let dropped = drop_islands(&mut grid);
+    if dropped > 0 {
+        warnings.push(format!(
+            "removed {dropped} cells of loose debris not attached to the model"
+        ));
+    }
+
     for _ in 0..opts.smooth {
         smooth_colors(&mut grid);
     }
     grid
+}
+
+/// Remove 6-connected voxel islands much smaller than the main body: generator noise (a speck
+/// of branch, a floating sliver) that no brick layout could attach. Returns cells removed.
+fn drop_islands(grid: &mut Grid) -> usize {
+    let mut label = vec![u32::MAX; grid.cells.len()];
+    let mut sizes = Vec::new();
+    let mut queue = VecDeque::new();
+    for start in 0..grid.cells.len() {
+        if grid.cells[start] == EMPTY || label[start] != u32::MAX {
+            continue;
+        }
+        let id = sizes.len() as u32;
+        let mut size = 0usize;
+        label[start] = id;
+        queue.push_back(start);
+        while let Some(i) = queue.pop_front() {
+            size += 1;
+            let next: Vec<usize> = grid.neighbors(i).collect();
+            for j in next {
+                if grid.cells[j] != EMPTY && label[j] == u32::MAX {
+                    label[j] = id;
+                    queue.push_back(j);
+                }
+            }
+        }
+        sizes.push(size);
+    }
+    let largest = sizes.iter().copied().max().unwrap_or(0);
+    let keep = |s: usize| s * 50 >= largest; // at least 2% of the main body
+    let mut removed = 0;
+    for (i, cell) in grid.cells.iter_mut().enumerate() {
+        if *cell != EMPTY && !keep(sizes[label[i] as usize]) {
+            *cell = EMPTY;
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// Weighted k-means in Lab (k-means++ seeding). Returns centers and each sample's cluster.
@@ -211,7 +282,8 @@ pub fn voxelize(mesh: &Mesh, opts: &Options, warnings: &mut Vec<String>) -> Grid
 fn kmeans(samples: &[(usize, Lab, f32)], k: usize, seed: u64) -> (Vec<Lab>, Vec<usize>) {
     let d2 = |a: Lab, b: Lab| (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f32>();
     let mut rng = Rng::new(seed ^ 0xC0105);
-    let mut centers = vec![samples[(rng.next_f32() * samples.len() as f32) as usize % samples.len()].1];
+    let mut centers =
+        vec![samples[(rng.next_f32() * samples.len() as f32) as usize % samples.len()].1];
     let mut nearest: Vec<f32> = samples.iter().map(|s| d2(s.1, centers[0]) * s.2).collect();
     while centers.len() < k {
         let total: f32 = nearest.iter().sum();
@@ -219,7 +291,13 @@ fn kmeans(samples: &[(usize, Lab, f32)], k: usize, seed: u64) -> (Vec<Lab>, Vec<
             break;
         }
         let mut target = rng.next_f32() * total;
-        let pick = nearest.iter().position(|&d| { target -= d; target <= 0.0 }).unwrap_or(samples.len() - 1);
+        let pick = nearest
+            .iter()
+            .position(|&d| {
+                target -= d;
+                target <= 0.0
+            })
+            .unwrap_or(samples.len() - 1);
         let c = samples[pick].1;
         centers.push(c);
         for (n, s) in nearest.iter_mut().zip(samples) {
@@ -229,7 +307,9 @@ fn kmeans(samples: &[(usize, Lab, f32)], k: usize, seed: u64) -> (Vec<Lab>, Vec<
     let mut assignment = vec![0; samples.len()];
     for _ in 0..12 {
         for (a, s) in assignment.iter_mut().zip(samples) {
-            *a = (0..centers.len()).min_by(|&x, &y| d2(s.1, centers[x]).total_cmp(&d2(s.1, centers[y]))).unwrap_or(0);
+            *a = (0..centers.len())
+                .min_by(|&x, &y| d2(s.1, centers[x]).total_cmp(&d2(s.1, centers[y])))
+                .unwrap_or(0);
         }
         let mut sums = vec![[0f32; 4]; centers.len()];
         for (&a, s) in assignment.iter().zip(samples) {
@@ -285,9 +365,15 @@ fn open_sides(grid: &Grid, outside: &[bool], i: usize) -> [bool; 6] {
     [
         open(x + 1 == grid.nx, if x + 1 < grid.nx { i + 1 } else { i }),
         open(x == 0, if x > 0 { i - 1 } else { i }),
-        open(y + 1 == grid.ny, if y + 1 < grid.ny { i + layer } else { i }),
+        open(
+            y + 1 == grid.ny,
+            if y + 1 < grid.ny { i + layer } else { i },
+        ),
         open(y == 0, if y > 0 { i - layer } else { i }),
-        open(z + 1 == grid.nz, if z + 1 < grid.nz { i + grid.nx } else { i }),
+        open(
+            z + 1 == grid.nz,
+            if z + 1 < grid.nz { i + grid.nx } else { i },
+        ),
         open(z == 0, if z > 0 { i - grid.nx } else { i }),
     ]
 }

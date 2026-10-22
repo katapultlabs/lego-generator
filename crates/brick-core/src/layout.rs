@@ -5,8 +5,12 @@
 //! layers below/above, no stacking exactly on an identical brick). Then a repair loop rips up
 //! the neighbourhood of floating bricks and re-lays it with a bonus for bridging floating and
 //! grounded bricks, in the spirit of Luo et al. 2015 "Legolization".
+//!
+//! Parts can be several layers tall: in mixed mode a layer is one plate and a brick spans
+//! three, so bricks go where three layers line up and plates keep the detail elsewhere.
 
 use crate::color::FILLER_CODE;
+use crate::model::{Facing, Shape};
 use crate::parts::PARTS;
 use crate::voxel::{EMPTY, Grid, WILDCARD};
 
@@ -17,7 +21,11 @@ pub struct Placement {
     pub z: usize,
     pub w: usize,
     pub d: usize,
+    /// Height in layers.
+    pub h: usize,
     pub color: u16,
+    pub shape: Shape,
+    pub facing: Option<Facing>,
 }
 
 pub struct Rng(u64);
@@ -36,11 +44,16 @@ impl Rng {
 
 pub struct Layout<'g> {
     grid: &'g Grid,
+    /// Part heights to try, in layers (e.g. [3, 1] = bricks and plates on a plate grid).
+    heights: &'g [usize],
     /// Brick id per cell, or -1.
     owner: Vec<i32>,
     bricks: Vec<Option<Placement>>,
-    /// Per brick id: belongs to the main (largest) connected piece (valid after `analyze`).
+    /// Per brick id: belongs to the main (largest) connected piece (valid after `analyze`;
+    /// during a repair refill, new parts linked to it are marked as they go).
     grounded: Vec<bool>,
+    /// Per cell: belonged to a floating part that a repair just ripped up.
+    orphan: Vec<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,56 +64,100 @@ pub struct Analysis {
 }
 
 impl<'g> Layout<'g> {
-    pub fn new(grid: &'g Grid) -> Self {
-        Self { grid, owner: vec![-1; grid.cells.len()], bricks: Vec::new(), grounded: Vec::new() }
+    pub fn new(grid: &'g Grid, heights: &'g [usize]) -> Self {
+        Self {
+            grid,
+            heights,
+            owner: vec![-1; grid.cells.len()],
+            bricks: Vec::new(),
+            grounded: Vec::new(),
+            orphan: vec![false; grid.cells.len()],
+        }
+    }
+
+    /// Cells covered by a placement.
+    fn cells_of(&self, p: &Placement) -> impl Iterator<Item = usize> + '_ {
+        let g = self.grid;
+        let (x0, y0, z0, w, d, h) = (p.x, p.y, p.z, p.w, p.d, p.h);
+        (y0..y0 + h).flat_map(move |y| {
+            (z0..z0 + d).flat_map(move |z| (x0..x0 + w).map(move |x| g.idx(x, y, z)))
+        })
     }
 
     pub fn placements(&self) -> impl Iterator<Item = &Placement> {
         self.bricks.iter().flatten()
     }
 
-    fn layer_cells(&self, y: usize) -> std::ops::Range<usize> {
-        let n = self.grid.nx * self.grid.nz;
-        y * n..(y + 1) * n
+    /// Lay parts over every uncovered occupied cell, bottom-up.
+    pub fn fill(&mut self, rng: &mut Rng) {
+        for y in 0..self.grid.ny {
+            self.fill_layer(y, y % 2 == 0, 0.0, rng);
+        }
     }
 
-    /// Lay bricks over every uncovered occupied cell, bottom-up.
-    pub fn fill(&mut self, rng: &mut Rng, bridge_bonus: f32) {
+    /// Cover layer `y`. Tall parts (bricks on a plate grid) only start on course boundaries
+    /// (every third plate), so they interlock like a brick wall; one-layer parts then fill in
+    /// the surface detail the courses can't follow.
+    fn fill_layer(&mut self, y: usize, prefer_long_x: bool, bridge_bonus: f32, rng: &mut Rng) {
+        let heights = self.heights;
+        let tall = heights.iter().copied().filter(|&h| h > 1).max();
+        match tall.filter(|t| y % t == 0) {
+            // While repairing, let plates compete with bricks on course layers: the fix for a
+            // stranded overhang is often a plate reaching across onto a brick's top.
+            Some(_) if bridge_bonus > 0.0 => self.cover_layer(y, heights, prefer_long_x, bridge_bonus, rng),
+            Some(t) => {
+                self.cover_layer(y, &[t], prefer_long_x, bridge_bonus, rng);
+                self.cover_layer(y, &[1], prefer_long_x, bridge_bonus, rng);
+            }
+            None => self.cover_layer(y, &[1], prefer_long_x, bridge_bonus, rng),
+        }
+    }
+
+    fn cover_layer(
+        &mut self,
+        y: usize,
+        heights: &[usize],
+        prefer_long_x: bool,
+        bridge_bonus: f32,
+        rng: &mut Rng,
+    ) {
         let g = self.grid;
-        for y in 0..g.ny {
-            let x_major = (y + (rng.next_f32() * 2.0) as usize) % 2 == 0;
-            let prefer_long_x = y % 2 == 0;
-            for k in 0..g.nx * g.nz {
-                let (x, z) = if x_major { (k % g.nx, k / g.nx) } else { (k / g.nz, k % g.nz) };
-                let i = g.idx(x, y, z);
-                if g.cells[i] == EMPTY || self.owner[i] >= 0 {
-                    continue;
-                }
-                let p = self.best_placement(x, y, z, prefer_long_x, bridge_bonus, rng);
-                self.place(p);
+        let x_major = rng.next_f32() < 0.5;
+        for k in 0..g.nx * g.nz {
+            let (x, z) = if x_major {
+                (k % g.nx, k / g.nx)
+            } else {
+                (k / g.nz, k % g.nz)
+            };
+            let i = g.idx(x, y, z);
+            if g.cells[i] == EMPTY || self.owner[i] >= 0 {
+                continue;
+            }
+            if let Some((p, anchored)) =
+                self.best_placement(x, y, z, heights, prefer_long_x, bridge_bonus, rng)
+            {
+                let id = self.place(p);
+                self.grounded[id] = anchored;
             }
         }
     }
 
-    fn place(&mut self, p: Placement) {
-        let id = self.bricks.len() as i32;
-        for z in p.z..p.z + p.d {
-            for x in p.x..p.x + p.w {
-                let i = self.grid.idx(x, p.y, z);
-                self.owner[i] = id;
-            }
+    fn place(&mut self, p: Placement) -> usize {
+        let id = self.bricks.len();
+        let cells: Vec<usize> = self.cells_of(&p).collect();
+        for i in cells {
+            self.owner[i] = id as i32;
         }
         self.bricks.push(Some(p));
         self.grounded.push(false);
+        id
     }
 
     fn remove(&mut self, id: usize) {
         if let Some(p) = self.bricks[id].take() {
-            for z in p.z..p.z + p.d {
-                for x in p.x..p.x + p.w {
-                    let i = self.grid.idx(x, p.y, z);
-                    self.owner[i] = -1;
-                }
+            let cells: Vec<usize> = self.cells_of(&p).collect();
+            for i in cells {
+                self.owner[i] = -1;
             }
         }
     }
@@ -110,35 +167,44 @@ impl<'g> Layout<'g> {
         cx: usize,
         y: usize,
         cz: usize,
+        heights: &[usize],
         prefer_long_x: bool,
         bridge_bonus: f32,
         rng: &mut Rng,
-    ) -> Placement {
+    ) -> Option<(Placement, bool)> {
         let g = self.grid;
-        let mut best: Option<(f32, Placement)> = None;
+        let mut best: Option<(f32, Placement, bool)> = None;
         let mut below: Vec<i32> = Vec::with_capacity(16);
         let mut above: Vec<i32> = Vec::with_capacity(16);
         let mut colors: Vec<(i16, u32)> = Vec::with_capacity(4);
 
-        for part in PARTS {
-            let (a, b) = (part.a as usize, part.b as usize);
-            let orientations: &[(usize, usize)] = if a == b { &[(b, a)] } else { &[(b, a), (a, b)] };
-            for &(w, d) in orientations {
-                for x0 in cx.saturating_sub(w - 1)..=cx {
-                    'offset: for z0 in cz.saturating_sub(d - 1)..=cz {
-                        if x0 + w > g.nx || z0 + d > g.nz {
-                            continue;
-                        }
-                        colors.clear();
-                        below.clear();
-                        above.clear();
-                        for z in z0..z0 + d {
-                            for x in x0..x0 + w {
-                                let i = g.idx(x, y, z);
+        for &h in heights {
+            if y + h > g.ny {
+                continue;
+            }
+            for part in PARTS {
+                let (a, b) = (part.a as usize, part.b as usize);
+                let orientations: &[(usize, usize)] =
+                    if a == b { &[(b, a)] } else { &[(b, a), (a, b)] };
+                for &(w, d) in orientations {
+                    for x0 in cx.saturating_sub(w - 1)..=cx {
+                        'offset: for z0 in cz.saturating_sub(d - 1)..=cz {
+                            if x0 + w > g.nx || z0 + d > g.nz {
+                                continue;
+                            }
+                            colors.clear();
+                            below.clear();
+                            above.clear();
+                            let mut orphans = 0;
+                            for (layer, z, x) in (y..y + h).flat_map(|l| {
+                                (z0..z0 + d).flat_map(move |z| (x0..x0 + w).map(move |x| (l, z, x)))
+                            }) {
+                                let i = g.idx(x, layer, z);
                                 let c = g.cells[i];
                                 if c == EMPTY || self.owner[i] >= 0 {
                                     continue 'offset;
                                 }
+                                orphans += usize::from(self.orphan[i]);
                                 if c != WILDCARD {
                                     if let Some(e) = colors.iter_mut().find(|e| e.0 == c) {
                                         e.1 += 1;
@@ -150,69 +216,86 @@ impl<'g> Layout<'g> {
                                         continue 'offset;
                                     }
                                 }
-                                if y > 0 {
+                                if layer == y && y > 0 {
                                     let o = self.owner[g.idx(x, y - 1, z)];
                                     if o >= 0 && !below.contains(&o) {
                                         below.push(o);
                                     }
                                 }
-                                if y + 1 < g.ny {
-                                    let o = self.owner[g.idx(x, y + 1, z)];
+                                if layer + 1 == y + h && y + h < g.ny {
+                                    let o = self.owner[g.idx(x, y + h, z)];
                                     if o >= 0 && !above.contains(&o) {
                                         above.push(o);
                                     }
                                 }
                             }
-                        }
 
-                        let area = (w * d) as f32;
-                        let links = (below.len() + above.len()) as f32;
-                        let majority = colors.iter().max_by_key(|e| e.1).copied();
-                        let off_color = colors.iter().map(|e| e.1).sum::<u32>() - majority.map(|e| e.1).unwrap_or(0);
-                        let mut score = area + 1.2 * links + 0.3 * rng.next_f32() - 1.5 * off_color as f32;
-                        if (w > d) == prefer_long_x && w != d {
-                            score += 0.25;
-                        }
-                        // Stacking exactly on an identical footprint builds weak columns.
-                        let same = |id: i32| {
-                            self.bricks[id as usize]
-                                .map(|q| q.x == x0 && q.z == z0 && q.w == w && q.d == d)
-                                .unwrap_or(false)
-                        };
-                        if below.len() == 1 && same(below[0]) {
-                            score -= 2.0;
-                        }
-                        if above.len() == 1 && same(above[0]) {
-                            score -= 2.0;
-                        }
-                        if bridge_bonus > 0.0 {
-                            let linked = below.iter().chain(above.iter());
+                            // Footprint first: a wide part ties columns together, which is what
+                            // holds a model up. Height earns a bonus (one brick saves two plates)
+                            // but not enough for a 1x1 brick column to beat a long plate.
+                            let area = (w * d) as f32 * (1.0 + 0.35 * (h as f32 - 1.0));
+                            let links = (below.len() + above.len()) as f32;
+                            let majority = colors.iter().max_by_key(|e| e.1).copied();
+                            let off_color = colors.iter().map(|e| e.1).sum::<u32>()
+                                - majority.map(|e| e.1).unwrap_or(0);
+                            let mut score =
+                                area + 1.2 * links + 0.3 * rng.next_f32() - 1.5 * off_color as f32;
+                            if (w > d) == prefer_long_x && w != d {
+                                score += 0.25;
+                            }
+                            // Stacking exactly on an identical footprint builds weak columns.
+                            let same = |id: i32| {
+                                self.bricks[id as usize]
+                                    .map(|q| q.x == x0 && q.z == z0 && q.w == w && q.d == d)
+                                    .unwrap_or(false)
+                            };
+                            if below.len() == 1 && same(below[0]) {
+                                score -= 2.0;
+                            }
+                            if above.len() == 1 && same(above[0]) {
+                                score -= 2.0;
+                            }
                             let (mut grounded, mut floating) = (false, false);
-                            for &o in linked {
-                                if self.grounded.get(o as usize).copied().unwrap_or(false) {
-                                    grounded = true;
-                                } else {
-                                    floating = true;
+                            if bridge_bonus > 0.0 {
+                                for &o in below.iter().chain(above.iter()) {
+                                    if self.grounded.get(o as usize).copied().unwrap_or(false) {
+                                        grounded = true;
+                                    } else {
+                                        floating = true;
+                                    }
+                                }
+                                // Reward joining a stranded part to the model, either through
+                                // studs or by taking over its cells while gripping the model.
+                                if grounded && (floating || orphans > 0) {
+                                    score += bridge_bonus;
+                                }
+                                if grounded || y == 0 {
+                                    score += 0.5;
                                 }
                             }
-                            if grounded && floating {
-                                score += bridge_bonus;
-                            }
-                            if grounded || y == 0 {
-                                score += 0.5;
-                            }
-                        }
 
-                        let p = Placement { x: x0, y, z: z0, w, d, color: majority.map(|e| e.0 as u16).unwrap_or(FILLER_CODE) };
-                        if best.map(|(s, _)| score > s).unwrap_or(true) {
-                            best = Some((score, p));
+                            let color = majority.map(|e| e.0 as u16).unwrap_or(FILLER_CODE);
+                            let p = Placement {
+                                x: x0,
+                                y,
+                                z: z0,
+                                w,
+                                d,
+                                h,
+                                color,
+                                shape: Shape::Box,
+                                facing: None,
+                            };
+                            if best.map(|(s, _, _)| score > s).unwrap_or(true) {
+                                best = Some((score, p, grounded));
+                            }
                         }
                     }
                 }
             }
         }
-        // A 1x1 always fits the cell itself, so `best` is set.
-        best.expect("1x1 always fits").1
+        // With one-layer parts allowed a 1x1 always fits, so only tall-only passes return None.
+        best.map(|(_, p, anchored)| (p, anchored))
     }
 
     /// Union bricks that share studs vertically; mark the largest component as grounded.
@@ -286,13 +369,14 @@ impl<'g> Layout<'g> {
                 .filter_map(|(id, p)| p.filter(|_| !self.grounded[id]))
                 .collect();
 
-            // Pick one floating brick (at random) and clear a dilated box around it on y-1..=y+1.
+            // Pick one floating brick (at random) and clear a dilated box around it, one layer
+            // beyond it above and below.
             let pick = floating[(rng.next_f32() * floating.len() as f32) as usize % floating.len()];
             let r = 2 + (rng.next_f32() * 3.0) as usize;
             let g = self.grid;
             let (x0, x1) = (pick.x.saturating_sub(r), (pick.x + pick.w + r).min(g.nx));
             let (z0, z1) = (pick.z.saturating_sub(r), (pick.z + pick.d + r).min(g.nz));
-            let (y0, y1) = (pick.y.saturating_sub(1), (pick.y + 2).min(g.ny));
+            let (y0, y1) = (pick.y.saturating_sub(1), (pick.y + pick.h + 1).min(g.ny));
             let mut doomed = Vec::new();
             for y in y0..y1 {
                 for z in z0..z1 {
@@ -304,10 +388,30 @@ impl<'g> Layout<'g> {
                     }
                 }
             }
+            // Removed parts may reach past the box vertically; refill everything they freed.
+            let (mut lo, mut hi) = (y0, y1);
+            for &id in &doomed {
+                if let Some(p) = self.bricks[id] {
+                    lo = lo.min(p.y);
+                    hi = hi.max(p.y + p.h);
+                }
+            }
+            let mut orphaned = Vec::new();
+            for &id in &doomed {
+                if let (Some(p), false) = (self.bricks[id], self.grounded[id]) {
+                    orphaned.extend(self.cells_of(&p));
+                }
+            }
+            for &i in &orphaned {
+                self.orphan[i] = true;
+            }
             for id in doomed {
                 self.remove(id);
             }
-            self.refill_range(y0, y1, rng);
+            self.refill_range(lo, hi, rng);
+            for &i in &orphaned {
+                self.orphan[i] = false;
+            }
 
             let next = self.analyze();
             if next.floating < current.floating
@@ -324,22 +428,18 @@ impl<'g> Layout<'g> {
     }
 
     fn refill_range(&mut self, y0: usize, y1: usize, rng: &mut Rng) {
-        let g = self.grid;
         for y in y0..y1 {
             let prefer_long_x = rng.next_f32() < 0.5;
-            for i in self.layer_cells(y) {
-                if g.cells[i] == EMPTY || self.owner[i] >= 0 {
-                    continue;
-                }
-                let x = i % g.nx;
-                let z = (i / g.nx) % g.nz;
-                let p = self.best_placement(x, y, z, prefer_long_x, 6.0, rng);
-                self.place(p);
-            }
+            self.fill_layer(y, prefer_long_x, 6.0, rng);
         }
     }
 
-    pub fn into_placements(self) -> Vec<Placement> {
-        self.bricks.into_iter().flatten().collect()
+    /// Placements with whether each is attached to the main piece (as of the last `analyze`).
+    pub fn into_placements(self) -> Vec<(Placement, bool)> {
+        self.bricks
+            .into_iter()
+            .zip(self.grounded)
+            .filter_map(|(p, g)| p.map(|p| (p, g)))
+            .collect()
     }
 }

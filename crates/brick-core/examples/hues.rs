@@ -12,7 +12,11 @@ fn main() {
         let (a, b, c) = (t.p[0], t.p[1], t.p[2]);
         let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
         let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-        let n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        let n = [
+            e1[1] * e2[2] - e1[2] * e2[1],
+            e1[2] * e2[0] - e1[0] * e2[2],
+            e1[0] * e2[1] - e1[1] * e2[0],
+        ];
         let area = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0;
         let lab = linear_to_lab(mesh.color_at(t, 1.0 / 3.0, 1.0 / 3.0));
         let chroma = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();

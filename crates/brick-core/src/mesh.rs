@@ -1,6 +1,5 @@
 //! Loading a GLB into a flat list of colored triangles in world space.
 
-
 use crate::Error;
 
 pub type Vec3 = [f32; 3];
@@ -31,7 +30,11 @@ impl Texture {
 
 pub fn srgb_to_linear(c: u8) -> f32 {
     let c = c as f32 / 255.0;
-    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -145,19 +148,24 @@ fn patch_webp(json: &[u8]) -> Result<Vec<u8>, Error> {
     serde_json::to_vec(&root).map_err(|_| Error::Empty)
 }
 
-fn decode_image(
-    image: &gltf::Image,
-    buffers: &[gltf::buffer::Data],
-) -> Result<Texture, String> {
+fn decode_image(image: &gltf::Image, buffers: &[gltf::buffer::Data]) -> Result<Texture, String> {
     let bytes: &[u8] = match image.source() {
         gltf::image::Source::View { view, .. } => {
             let buf = &buffers[view.buffer().index()];
             &buf[view.offset()..view.offset() + view.length()]
         }
-        gltf::image::Source::Uri { .. } => return Err("external image files are not supported".into()),
+        gltf::image::Source::Uri { .. } => {
+            return Err("external image files are not supported".into());
+        }
     };
-    let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?.to_rgba8();
-    Ok(Texture { width: img.width(), height: img.height(), rgba: img.into_raw() })
+    let img = image::load_from_memory(bytes)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    Ok(Texture {
+        width: img.width(),
+        height: img.height(),
+        rgba: img.into_raw(),
+    })
 }
 
 pub fn load_glb(bytes: &[u8]) -> Result<Mesh, Error> {
@@ -167,8 +175,13 @@ pub fn load_glb(bytes: &[u8]) -> Result<Mesh, Error> {
     let buffers = gltf::import_buffers(&doc, None, glb.bin.map(|b| b.into_owned()))?;
     let mut mesh = Mesh::default();
 
-    if doc.extensions_required().any(|e| e == "KHR_draco_mesh_compression" || e == "EXT_meshopt_compression") {
-        mesh.warnings.push("compressed geometry (Draco/meshopt) is not supported; decompress the GLB first".into());
+    if doc
+        .extensions_required()
+        .any(|e| e == "KHR_draco_mesh_compression" || e == "EXT_meshopt_compression")
+    {
+        mesh.warnings.push(
+            "compressed geometry (Draco/meshopt) is not supported; decompress the GLB first".into(),
+        );
     }
 
     let mut texture_slot = vec![None; doc.images().len()];
@@ -194,10 +207,21 @@ pub fn load_glb(bytes: &[u8]) -> Result<Mesh, Error> {
             texture: info.and_then(|i| texture_slot[i.texture().source().index()]),
         });
     }
-    mesh.materials.push(Material { base: [0.8, 0.8, 0.8, 1.0], texture: None });
+    mesh.materials.push(Material {
+        base: [0.8, 0.8, 0.8, 1.0],
+        texture: None,
+    });
 
-    let scene = doc.default_scene().or_else(|| doc.scenes().next()).ok_or(Error::Empty)?;
-    let identity: Mat4 = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]];
+    let scene = doc
+        .default_scene()
+        .or_else(|| doc.scenes().next())
+        .ok_or(Error::Empty)?;
+    let identity: Mat4 = [
+        [1., 0., 0., 0.],
+        [0., 1., 0., 0.],
+        [0., 0., 1., 0.],
+        [0., 0., 0., 1.],
+    ];
     let mut stack: Vec<(gltf::Node, Mat4)> = scene.nodes().map(|n| (n, identity)).collect();
 
     while let Some((node, parent)) = stack.pop() {
@@ -212,13 +236,17 @@ pub fn load_glb(bytes: &[u8]) -> Result<Mesh, Error> {
             }
             let reader = prim.reader(|b| Some(&buffers[b.index()]));
             let Some(positions) = reader.read_positions() else {
-                mesh.warnings.push(format!("mesh '{}' has no readable positions", gmesh.name().unwrap_or("?")));
+                mesh.warnings.push(format!(
+                    "mesh '{}' has no readable positions",
+                    gmesh.name().unwrap_or("?")
+                ));
                 continue;
             };
             let positions: Vec<Vec3> = positions.map(|p| transform(&world, p)).collect();
             let mat = prim.material().index().unwrap_or(default_material);
             let set = tex_coord_set.get(mat).copied().unwrap_or(0);
-            let uvs: Option<Vec<[f32; 2]>> = reader.read_tex_coords(set).map(|t| t.into_f32().collect());
+            let uvs: Option<Vec<[f32; 2]>> =
+                reader.read_tex_coords(set).map(|t| t.into_f32().collect());
             let colors: Option<Vec<[f32; 3]>> = reader
                 .read_colors(0)
                 .map(|c| c.into_rgba_f32().map(|c| [c[0], c[1], c[2]]).collect());

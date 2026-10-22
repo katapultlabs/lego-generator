@@ -1,14 +1,18 @@
 //! The brick model: the contract shared by the CLI, the web viewer and (later) native apps.
 //!
 //! Coordinates are a grid: `x` and `z` in studs, `y` in layers (one layer = one brick or one
-//! plate tall, see [`Units`]). `y` is up. A brick occupies cells `x..x+w`, `y`, `z..z+d`.
+//! plate tall, see [`Units`]). `y` is up. A part occupies cells `x..x+w`, `y..y+h`, `z..z+d`.
+//!
+//! Version 2 added `h`, `shape` and `facing` on parts, the `mixed` layer kind and BrickLink ids.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum LayerKind {
+    /// One layer = one plate; bricks (3 layers) where possible, plates for detail.
     #[default]
+    Mixed,
     Brick,
     Plate,
 }
@@ -18,7 +22,7 @@ impl LayerKind {
     pub fn height_ldu(self) -> u32 {
         match self {
             LayerKind::Brick => 24,
-            LayerKind::Plate => 8,
+            LayerKind::Plate | LayerKind::Mixed => 8,
         }
     }
 }
@@ -50,6 +54,42 @@ pub struct Color {
     pub hex: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Shape {
+    /// Rectangular brick or plate with studs on top.
+    #[default]
+    Box,
+    /// 30° slope: full height at the back, descending toward `facing`; no studs.
+    Slope,
+}
+
+/// Horizontal direction in grid space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Facing {
+    #[serde(rename = "+x")]
+    PosX,
+    #[serde(rename = "-x")]
+    NegX,
+    #[serde(rename = "+z")]
+    PosZ,
+    #[serde(rename = "-z")]
+    NegZ,
+}
+
+impl Facing {
+    pub const ALL: [Facing; 4] = [Facing::PosX, Facing::NegX, Facing::PosZ, Facing::NegZ];
+
+    pub fn delta(self) -> (i32, i32) {
+        match self {
+            Facing::PosX => (1, 0),
+            Facing::NegX => (-1, 0),
+            Facing::PosZ => (0, 1),
+            Facing::NegZ => (0, -1),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Brick {
@@ -62,10 +102,20 @@ pub struct Brick {
     pub w: u32,
     /// Footprint along z, in studs.
     pub d: u32,
+    /// Height in layers.
+    pub h: u32,
+    #[serde(default)]
+    pub shape: Shape,
+    /// Slopes only: the direction the slope descends toward.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facing: Option<Facing>,
     /// LDraw color code.
     pub color: u16,
     /// 1-based build step.
     pub step: u32,
+    /// Not attached (through studs) to the main piece; it would fall off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub floating: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +125,9 @@ pub struct BomLine {
     pub name: String,
     pub color: u16,
     pub count: u32,
+    /// BrickLink catalog item number and color id, when known.
+    pub bricklink_part: Option<String>,
+    pub bricklink_color: Option<u16>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

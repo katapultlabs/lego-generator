@@ -8,7 +8,7 @@ mod preview;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use brick_core::{LayerKind, Options, UpAxis, export};
+use brick_core::{LayerKind, Options, UpAxis, bricklink, export};
 
 fn main() {
     if let Err(e) = run() {
@@ -36,6 +36,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             "--colors" => opts.color_count = num(args.next(), "--colors")? as u32,
             "--vivid" => opts.vivid = args.next().ok_or("--vivid needs a value")?.parse().map_err(|_| "--vivid: not a number")?,
             "--plates" => opts.layer = LayerKind::Plate,
+            "--bricks" => opts.layer = LayerKind::Brick,
+            "--no-slopes" => opts.slopes = false,
             "--z-up" => opts.up_axis = UpAxis::Z,
             "--out" => out = args.next().ok_or("--out needs a value")?.into(),
             "-h" | "--help" => {
@@ -60,6 +62,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write(out.join(format!("{name}.json")), serde_json::to_string(&model)?)?;
     std::fs::write(out.join(format!("{name}.ldr")), export::to_ldraw(&model, &name))?;
     std::fs::write(out.join(format!("{name}.bom.csv")), export::bom_csv(&model))?;
+    std::fs::write(out.join(format!("{name}.bricklink.xml")), bricklink::wanted_list_xml(&model))?;
     preview::render_preview(&model).save(out.join(format!("{name}.png")))?;
 
     let s = &model.stats;

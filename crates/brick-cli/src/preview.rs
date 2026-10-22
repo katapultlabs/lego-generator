@@ -1,6 +1,6 @@
 //! Quick isometric PNG preview of a brick model (two opposite corners, side by side).
 
-use brick_core::{BrickModel, color};
+use brick_core::{BrickModel, Shape, color};
 use image::{Rgb, RgbImage};
 
 const A: f32 = 8.0; // half-width of a cell's diamond, in pixels
@@ -53,10 +53,14 @@ fn render(model: &BrickModel, flip: bool) -> RgbImage {
     // One entry per cell: (x, y, z, color, brick index) in view coordinates.
     let mut cells = Vec::new();
     for (bi, b) in model.bricks.iter().enumerate() {
-        for z in b.z..b.z + b.d as i32 {
-            for x in b.x..b.x + b.w as i32 {
-                let (vx, vz) = if flip { (nx - 1 - x, nz - 1 - z) } else { (x, z) };
-                cells.push((vx, b.y, vz, color::rgb_of(b.color), bi));
+        // Slopes are drawn as their lower half, which reads as a step-down.
+        let top = if b.shape == Shape::Slope { b.y + 1 } else { b.y + b.h as i32 };
+        for y in b.y..top {
+            for z in b.z..b.z + b.d as i32 {
+                for x in b.x..b.x + b.w as i32 {
+                    let (vx, vz) = if flip { (nx - 1 - x, nz - 1 - z) } else { (x, z) };
+                    cells.push((vx, y, vz, color::rgb_of(b.color), bi));
+                }
             }
         }
     }

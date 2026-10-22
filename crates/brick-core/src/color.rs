@@ -1,7 +1,7 @@
 //! LEGO palette (LDraw codes, solid colors only) and perceptual nearest-color matching.
 //!
-//! RGB values follow LDraw's LDConfig.ldr closely but are not authoritative; good enough for
-//! matching and previews.
+//! RGB values are LDConfig.ldr's (LDraw library, 2026-05-29). Light Blue, Salmon and Medium Green are
+//! left out: BrickLink lists them for almost none of our parts.
 
 /// (LDraw code, name, sRGB hex).
 pub const PALETTE: &[(u16, &str, u32)] = &[
@@ -11,14 +11,12 @@ pub const PALETTE: &[(u16, &str, u32)] = &[
     (3, "Dark Turquoise", 0x069D9F),
     (4, "Red", 0xB40000),
     (5, "Dark Pink", 0xD3359D),
-    (9, "Light Blue", 0x97CBD9),
     (10, "Bright Green", 0x58AB41),
-    (12, "Salmon", 0xF06D61),
     (13, "Pink", 0xF6A9BB),
     (14, "Yellow", 0xFAC80A),
     (15, "White", 0xF4F4F4),
     (19, "Tan", 0xD7BA8C),
-    (22, "Purple", 0x901F76),
+    (22, "Purple", 0x671F81),
     (25, "Orange", 0xD67923),
     (27, "Lime", 0xA5CA18),
     (28, "Dark Tan", 0x897D62),
@@ -26,10 +24,9 @@ pub const PALETTE: &[(u16, &str, u32)] = &[
     (30, "Medium Lavender", 0xA06EB9),
     (31, "Lavender", 0xCDA4DE),
     (70, "Reddish Brown", 0x5F3109),
-    (71, "Light Bluish Grey", 0xA0A5A9),
-    (72, "Dark Bluish Grey", 0x6C6E68),
+    (71, "Light Bluish Grey", 0x969696),
+    (72, "Dark Bluish Grey", 0x646464),
     (73, "Medium Blue", 0x7396C8),
-    (74, "Medium Green", 0x7FC475),
     (84, "Medium Nougat", 0xAA7D55),
     (85, "Dark Purple", 0x441A91),
     (92, "Nougat", 0xBB805A),
@@ -37,7 +34,7 @@ pub const PALETTE: &[(u16, &str, u32)] = &[
     (212, "Bright Light Blue", 0x9DC3F7),
     (226, "Bright Light Yellow", 0xFFEC6C),
     (272, "Dark Blue", 0x19325A),
-    (288, "Dark Green", 0x184632),
+    (288, "Dark Green", 0x00451A),
     (308, "Dark Brown", 0x352100),
     (320, "Dark Red", 0x720012),
     (321, "Dark Azure", 0x469BC3),
@@ -57,11 +54,19 @@ pub fn hex(rgb: u32) -> String {
 }
 
 pub fn name_of(code: u16) -> &'static str {
-    PALETTE.iter().find(|p| p.0 == code).map(|p| p.1).unwrap_or("Unknown")
+    PALETTE
+        .iter()
+        .find(|p| p.0 == code)
+        .map(|p| p.1)
+        .unwrap_or("Unknown")
 }
 
 pub fn rgb_of(code: u16) -> u32 {
-    PALETTE.iter().find(|p| p.0 == code).map(|p| p.2).unwrap_or(0x808080)
+    PALETTE
+        .iter()
+        .find(|p| p.0 == code)
+        .map(|p| p.2)
+        .unwrap_or(0x808080)
 }
 
 pub type Lab = [f32; 3];
@@ -78,7 +83,13 @@ fn linear_to_xyz(c: [f32; 3]) -> [f32; 3] {
 /// Linear sRGB in [0,1] to CIE L*a*b* (D65).
 pub fn linear_to_lab(c: [f32; 3]) -> Lab {
     let [x, y, z] = linear_to_xyz(c);
-    let f = |t: f32| if t > 216.0 / 24389.0 { t.cbrt() } else { (24389.0 / 27.0 * t + 16.0) / 116.0 };
+    let f = |t: f32| {
+        if t > 216.0 / 24389.0 {
+            t.cbrt()
+        } else {
+            (24389.0 / 27.0 * t + 16.0) / 116.0
+        }
+    };
     let (fx, fy, fz) = (f(x / 0.95047), f(y), f(z / 1.08883));
     [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
 }
@@ -100,14 +111,23 @@ pub fn ciede2000(a: Lab, b: Lab) -> f32 {
     let (a1p, a2p) = ((1.0 + g) * a1, (1.0 + g) * a2);
     let (c1p, c2p) = ((a1p * a1p + b1 * b1).sqrt(), (a2p * a2p + b2 * b2).sqrt());
     let hp = |b: f32, a: f32| {
-        if a == 0.0 && b == 0.0 { 0.0 } else { let h = b.atan2(a).to_degrees(); if h < 0.0 { h + 360.0 } else { h } }
+        if a == 0.0 && b == 0.0 {
+            0.0
+        } else {
+            let h = b.atan2(a).to_degrees();
+            if h < 0.0 { h + 360.0 } else { h }
+        }
     };
     let (h1p, h2p) = (hp(b1, a1p), hp(b2, a2p));
     let dlp = l2 - l1;
     let dcp = c2p - c1p;
     let mut dhp = h2p - h1p;
     if c1p * c2p != 0.0 {
-        if dhp > 180.0 { dhp -= 360.0 } else if dhp < -180.0 { dhp += 360.0 }
+        if dhp > 180.0 {
+            dhp -= 360.0
+        } else if dhp < -180.0 {
+            dhp += 360.0
+        }
     } else {
         dhp = 0.0;
     }
@@ -123,7 +143,8 @@ pub fn ciede2000(a: Lab, b: Lab) -> f32 {
     } else {
         (h1p + h2p - 360.0) / 2.0
     };
-    let t = 1.0 - 0.17 * (hbp - 30.0).to_radians().cos() + 0.24 * (2.0 * hbp).to_radians().cos()
+    let t = 1.0 - 0.17 * (hbp - 30.0).to_radians().cos()
+        + 0.24 * (2.0 * hbp).to_radians().cos()
         + 0.32 * (3.0 * hbp + 6.0).to_radians().cos()
         - 0.20 * (4.0 * hbp - 63.0).to_radians().cos();
     let dtheta = 30.0 * (-((hbp - 275.0) / 25.0).powi(2)).exp();
