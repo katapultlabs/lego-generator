@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/brick-core", "crates/brick-cli", "crates/brick-wasm"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+brick-core = { path = "crates/brick-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[profile.dev]
+opt-level = 1
